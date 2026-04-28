@@ -1,0 +1,14 @@
+# 複製此檔為 local.properties（專案根目錄）
+# local.properties 已列入 .gitignore，請勿將金鑰提交至 Git。
+#
+# Android Studio 通常會自動建立 local.properties 並寫入 sdk.dir；
+# 你只要在有 SDK 路徑的同一個檔案裡加上下面兩行金鑰即可。
+
+# Google Maps Platform — 啟用「Maps SDK for Android」後建立 API 金鑰，
+# 建議限制 Android 應用程式：套件名稱 com.example.foundit + SHA-1
+MAPS_API_KEY=你的_Maps_Android_金鑰
+
+# Google 登入 — 必須使用 OAuth 2.0「網頁應用程式」類型的「用戶端 ID」
+# （用於 requestIdToken；與 Android 類型的用戶端 ID 不同，兩個都要在 Console 建立）
+# Console: Google Cloud → API 和服務 → 憑證 → 建立用戶端 ID
+GOOGLE_WEB_CLIENT_ID=123456789-xxxx.apps.googleusercontent.com

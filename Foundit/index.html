@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>找得到 - 失物共享平台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Noto Sans TC', 'sans-serif'] },
+          colors: {
+            primary: { 50: '#f0fdf4', 100: '#dcfce7', 200: '#bbf7d0', 300: '#86efac', 400: '#4ade80', 500: '#22c55e', 600: '#16a34a' },
+            accent: { 400: '#facc15', 500: '#eab308', 600: '#ca8a04' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { font-family: 'Noto Sans TC', sans-serif; overflow: hidden; }
+    .phone-frame { width: 393px; height: 852px; box-shadow: 0 50px 100px -20px rgba(0,0,0,.25); border-radius: 50px; overflow: hidden; position: relative; }
+    .glass { background: rgba(255,255,255,0.25); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.3); }
+    .glass-dark { background: rgba(0,0,0,0.2); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
+    .page { display: none; height: 100%; flex-direction: column; overflow: hidden; }
+    .page.active { display: flex; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%); }
+    .gradient-bg-alt { background: linear-gradient(180deg, #0f172a 0%, #1e293b 50%, #334155 100%); }
+    .card-shadow { box-shadow: 0 4px 24px -4px rgba(0,0,0,0.1), 0 8px 16px -6px rgba(0,0,0,0.05); }
+    .safe-top { padding-top: env(safe-area-inset-top, 44px); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 34px); }
+    .animate-fade-in { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .tab-bar { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); display: flex; align-items: flex-end; padding: 8px 0; border-top: 1px solid rgba(0,0,0,0.05); }
+    .tab-bar-group { flex: 1; display: flex; justify-content: space-around; align-items: center; }
+    .tab-item { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px; color: #64748b; font-size: 10px; transition: all 0.2s; flex: 1; }
+    .tab-item.active { color: #16a34a; font-weight: 600; }
+    .tab-item.add-btn { flex: 0; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #22c55e, #14b8a6); color: white; box-shadow: 0 4px 14px rgba(34,197,94,0.4); margin-top: -20px; margin-bottom: 4px; }
+    .tab-item.add-btn i { width: 24px; height: 24px; }
+    .add-modal { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(255,255,255,0.95); backdrop-filter: blur(24px); border-radius: 24px 24px 0 0; padding: 24px; padding-bottom: 50px; display: none; z-index: 100; box-shadow: 0 -10px 40px rgba(0,0,0,0.15); }
+    .add-modal.show { display: block; animation: slideUp 0.3s ease; }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+  <div class="phone-frame bg-white relative">
+    <!-- Status Bar -->
+    <div class="absolute top-0 left-0 right-0 z-50 h-12 bg-black/20 flex items-end justify-between px-8 pb-2 text-white text-sm safe-top">
+      <span>9:41</span>
+      <div class="flex gap-1"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery"></i></div>
+    </div>
+
+    <!-- ==================== PAGE 1: Splash ==================== -->
+    <div id="page-splash" class="page active gradient-bg">
+      <div class="flex-1 flex flex-col items-center justify-center p-8">
+        <div class="w-28 h-28 rounded-3xl glass flex items-center justify-center mb-6">
+          <i data-lucide="search" class="w-14 h-14 text-white"></i>
+        </div>
+        <h1 class="text-4xl font-bold text-white mb-2">找得到</h1>
+        <p class="text-white/90 text-center mb-12">失物共享 · 讓愛回家</p>
+        <div class="w-12 h-1.5 bg-white/60 rounded-full"></div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 2: 登入註冊 ==================== -->
+    <div id="page-login" class="page gradient-bg">
+      <div class="flex-1 flex flex-col p-6 pt-20">
+        <h1 class="text-3xl font-bold text-white mb-1">歡迎回來</h1>
+        <p class="text-white/80 mb-12">登入或註冊開始使用</p>
+        <div class="space-y-3">
+          <button onclick="goTo('page-verify')" class="w-full py-4 rounded-2xl glass text-white font-medium flex items-center justify-center gap-3">
+            <i data-lucide="smartphone" class="w-5 h-5"></i> 手機驗證碼登入
+          </button>
+          <button class="w-full py-4 rounded-2xl bg-white/90 text-slate-800 font-medium flex items-center justify-center gap-3">
+            <i data-lucide="mail" class="w-5 h-5"></i> Google 登入
+          </button>
+          <button class="w-full py-4 rounded-2xl bg-white/90 text-slate-800 font-medium flex items-center justify-center gap-3">
+            <i data-lucide="smartphone" class="w-5 h-5"></i> Apple 登入
+          </button>
+          <button class="w-full py-4 rounded-2xl bg-[#06C755] text-white font-medium flex items-center justify-center gap-3">
+            <i data-lucide="message-circle" class="w-5 h-5"></i> LINE 登入
+          </button>
+        </div>
+        <p class="text-white/70 text-sm text-center mt-8">登入即表示同意 <a href="#" class="underline">服務條款</a> 與 <a href="#" class="underline">隱私政策</a></p>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 3: 手機驗證 ==================== -->
+    <div id="page-verify" class="page bg-slate-50">
+      <div class="p-6 pt-16">
+        <button onclick="goTo('page-login')" class="p-2 -ml-2 rounded-full hover:bg-slate-200/50 mb-6">
+          <i data-lucide="arrow-left" class="w-5 h-5 text-slate-600"></i>
+        </button>
+        <h1 class="text-2xl font-bold text-slate-800 mb-2">手機驗證</h1>
+        <p class="text-slate-500 mb-8">我們將發送驗證碼至您的手機</p>
+        <input type="tel" placeholder="請輸入手機號碼" class="w-full py-4 px-4 rounded-2xl border border-slate-200 bg-white mb-4">
+        <button onclick="goTo('page-home')" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium">發送驗證碼</button>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 4: 首頁 ==================== -->
+    <div id="page-home" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h1 class="text-xl font-bold text-slate-800">找得到</h1>
+            <p class="text-slate-500 text-sm">台北市 · 即時更新</p>
+          </div>
+          <button onclick="goTo('page-notify')" class="p-2 rounded-full relative">
+            <i data-lucide="bell" class="w-6 h-6 text-slate-600"></i>
+            <span class="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full"></span>
+          </button>
+        </div>
+        <div class="flex gap-2 mb-4">
+          <button onclick="goTo('page-search')" class="flex-1 py-3 rounded-xl glass flex items-center justify-center gap-2 text-slate-700">
+            <i data-lucide="search" class="w-4 h-4"></i> 搜尋
+          </button>
+          <button onclick="goTo('page-map')" class="flex-1 py-3 rounded-xl glass flex items-center justify-center gap-2 text-slate-700">
+            <i data-lucide="map-pin" class="w-4 h-4"></i> 地圖
+          </button>
+        </div>
+        <div class="flex gap-2 mb-4">
+          <button id="home-tab-lost" onclick="switchHomeTab('lost')" class="flex-1 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium">遺失物</button>
+          <button id="home-tab-found" onclick="switchHomeTab('found')" class="flex-1 py-2 rounded-full bg-slate-200 text-slate-600 text-sm">撿到物</button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24">
+        <div id="home-list-lost" class="space-y-3">
+          <div onclick="goTo('page-detail')" class="rounded-2xl bg-white card-shadow overflow-hidden flex animate-fade-in">
+            <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400" class="w-28 h-28 object-cover">
+            <div class="flex-1 p-4">
+              <h3 class="font-semibold text-slate-800">黑色皮夾</h3>
+              <p class="text-slate-500 text-sm">3/22 遺失 · 信義區</p>
+              <div class="flex items-center gap-2 mt-2">
+                <span class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">賞金 $500</span>
+              </div>
+            </div>
+          </div>
+          <div class="rounded-2xl bg-white card-shadow overflow-hidden flex animate-fade-in">
+            <img src="https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=400" class="w-28 h-28 object-cover">
+            <div class="flex-1 p-4">
+              <h3 class="font-semibold text-slate-800">iPhone 15 Pro</h3>
+              <p class="text-slate-500 text-sm">3/20 遺失 · 中山區</p>
+              <span class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">賞金 $1000</span>
+            </div>
+          </div>
+        </div>
+        <div id="home-list-found" class="space-y-3 hidden">
+          <div onclick="goTo('page-detail')" class="rounded-2xl bg-white card-shadow overflow-hidden flex animate-fade-in">
+            <img src="https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400" class="w-28 h-28 object-cover">
+            <div class="flex-1 p-4">
+              <h3 class="font-semibold text-slate-800">Nike 運動鞋</h3>
+              <p class="text-slate-500 text-sm">3/21 撿到 · 大安區</p>
+            </div>
+          </div>
+          <div class="rounded-2xl bg-white card-shadow overflow-hidden flex animate-fade-in">
+            <img src="https://images.unsplash.com/photo-1585386959984-a4155224a1ad?w=400" class="w-28 h-28 object-cover">
+            <div class="flex-1 p-4">
+              <h3 class="font-semibold text-slate-800">藍色雨傘</h3>
+              <p class="text-slate-500 text-sm">3/20 撿到 · 松山區</p>
+            </div>
+          </div>
+          <div class="rounded-2xl bg-white card-shadow overflow-hidden flex animate-fade-in">
+            <img src="https://images.unsplash.com/photo-1585336261022-680e295ce3fe?w=400" class="w-28 h-28 object-cover">
+            <div class="flex-1 p-4">
+              <h3 class="font-semibold text-slate-800">黑色鑰匙串</h3>
+              <p class="text-slate-500 text-sm">3/19 撿到 · 信義區</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-bar safe-bottom">
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-home')" class="tab-item active"><i data-lucide="home"></i><span>首頁</span></button>
+          <button onclick="goTo('page-chat-list')" class="tab-item"><i data-lucide="message-circle"></i><span>聊天</span></button>
+        </div>
+        <button onclick="toggleAddModal()" class="tab-item add-btn"><i data-lucide="plus"></i></button>
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-qr')" class="tab-item"><i data-lucide="qr-code"></i><span>QR</span></button>
+          <button onclick="goTo('page-profile')" class="tab-item"><i data-lucide="user"></i><span>我的</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 5: 搜尋頁 ==================== -->
+    <div id="page-search" class="page bg-slate-50">
+      <div class="p-4 pt-16">
+        <div class="flex items-center gap-3 mb-4">
+          <button onclick="goTo('page-home')" class="p-2 rounded-full hover:bg-slate-200/50"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+          <input type="text" placeholder="搜尋物品、地點..." class="flex-1 py-3 px-4 rounded-xl bg-white border border-slate-200">
+        </div>
+        <div class="flex flex-wrap gap-2 mb-4">
+          <span class="px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700 text-sm">錢包</span>
+          <span class="px-3 py-1.5 rounded-full bg-slate-200 text-slate-600 text-sm">手機</span>
+          <span class="px-3 py-1.5 rounded-full bg-slate-200 text-slate-600 text-sm">鑰匙</span>
+          <span class="px-3 py-1.5 rounded-full bg-slate-200 text-slate-600 text-sm">證件</span>
+        </div>
+        <div class="flex gap-2 mb-4">
+          <select class="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-sm">分類</select>
+          <select class="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-sm">地區</select>
+          <select class="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-sm">日期</select>
+        </div>
+        <button onclick="goTo('page-ai-match')" class="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium flex items-center justify-center gap-2 mb-4">
+          <i data-lucide="sparkles" class="w-5 h-5"></i> AI 智慧配對
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-8">
+        <div class="rounded-2xl bg-white card-shadow p-4 mb-3">
+          <div class="flex gap-3">
+            <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200" class="w-20 h-20 rounded-xl object-cover">
+            <div class="flex-1">
+              <h3 class="font-semibold text-slate-800">黑色皮夾</h3>
+              <p class="text-slate-500 text-sm">信義區 · 3/22</p>
+              <span class="text-amber-600 text-sm font-medium">賞金 $500</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 6: 地圖頁 ==================== -->
+    <div id="page-map" class="page bg-slate-100">
+      <div class="absolute top-16 left-4 right-4 z-10">
+        <div class="flex gap-2">
+          <input type="text" placeholder="搜尋地點..." class="flex-1 py-3 px-4 rounded-xl glass text-slate-800">
+          <button class="p-3 rounded-xl glass"><i data-lucide="crosshair" class="w-5 h-5 text-slate-600"></i></button>
+        </div>
+      </div>
+      <div class="flex-1 relative bg-slate-300">
+        <img src="https://images.unsplash.com/photo-1524661135-423995f22d0b?w=800" class="w-full h-full object-cover opacity-80">
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
+          <div class="w-4 h-4 bg-rose-500 rounded-full border-4 border-white animate-pulse"></div>
+          <div class="glass-dark px-3 py-2 rounded-lg text-white text-sm">5 件遺失物在附近</div>
+        </div>
+      </div>
+      <div class="p-4 pb-24">
+        <div class="rounded-2xl glass p-4">
+          <h3 class="font-semibold text-slate-800 mb-2">附近遺失物</h3>
+          <div class="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+            <div onclick="goTo('page-detail')" class="flex-shrink-0 w-24 text-center">
+              <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200" class="w-16 h-16 rounded-xl object-cover mx-auto mb-1">
+              <p class="text-xs text-slate-600">皮夾</p>
+            </div>
+            <div class="flex-shrink-0 w-24 text-center">
+              <img src="https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=200" class="w-16 h-16 rounded-xl object-cover mx-auto mb-1">
+              <p class="text-xs text-slate-600">手機</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button onclick="goTo('page-home')" class="absolute top-16 right-4 p-2 rounded-full glass">
+        <i data-lucide="x" class="w-5 h-5 text-slate-600"></i>
+      </button>
+    </div>
+
+    <!-- ==================== PAGE 7: 新增遺失物 ==================== -->
+    <div id="page-add-lost" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2 flex items-center justify-between">
+        <button onclick="goTo('page-home')" class="p-2 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
+        <h1 class="text-lg font-semibold text-slate-800">新增遺失物</h1>
+        <div class="w-9"></div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24">
+        <div class="rounded-2xl bg-slate-200 flex items-center justify-center h-40 mb-4">
+          <div class="text-center text-slate-500">
+            <i data-lucide="camera" class="w-12 h-12 mx-auto mb-2"></i>
+            <p class="text-sm">點擊上傳照片</p>
+          </div>
+        </div>
+        <input type="text" placeholder="物品名稱" class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3">
+        <select class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3">選擇分類</select>
+        <input type="text" placeholder="顏色" class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3">
+        <textarea placeholder="詳細描述" class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3 h-24 resize-none"></textarea>
+        <div class="rounded-xl glass p-4 mb-3 flex items-center gap-3">
+          <i data-lucide="map-pin" class="w-5 h-5 text-emerald-500"></i>
+          <div>
+            <p class="font-medium text-slate-800">遺失地點</p>
+            <p class="text-slate-500 text-sm">點擊選擇地圖位置</p>
+          </div>
+        </div>
+        <input type="datetime-local" class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3">
+        <label class="flex items-center gap-3 p-4 rounded-xl glass mb-4">
+          <input type="checkbox" class="rounded">
+          <span>提供賞金</span>
+        </label>
+        <button onclick="goTo('page-home')" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium">發布</button>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 8: 新增撿到物 ==================== -->
+    <div id="page-add-found" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2 flex items-center justify-between">
+        <button onclick="goTo('page-home')" class="p-2 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
+        <h1 class="text-lg font-semibold text-slate-800">新增撿到物</h1>
+        <div class="w-9"></div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24">
+        <div class="rounded-2xl bg-slate-200 flex items-center justify-center h-40 mb-4">
+          <div class="text-center text-slate-500">
+            <i data-lucide="camera" class="w-12 h-12 mx-auto mb-2"></i>
+            <p class="text-sm">點擊上傳照片</p>
+          </div>
+        </div>
+        <div class="rounded-xl glass p-4 mb-3 flex items-center gap-3">
+          <i data-lucide="map-pin" class="w-5 h-5 text-emerald-500"></i>
+          <div>
+            <p class="font-medium text-slate-800">撿到地點</p>
+            <p class="text-slate-500 text-sm">點擊選擇</p>
+          </div>
+        </div>
+        <input type="datetime-local" class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3">
+        <input type="text" placeholder="存放地點" class="w-full py-3 px-4 rounded-xl bg-white border border-slate-200 mb-3">
+        <label class="flex items-center gap-3 p-4 rounded-xl glass mb-4">
+          <input type="checkbox" class="rounded">
+          <span>已移交警察局</span>
+        </label>
+        <button onclick="goTo('page-ai-match')" class="w-full py-3 rounded-xl bg-violet-500 text-white font-medium flex items-center justify-center gap-2 mb-3">
+          <i data-lucide="sparkles" class="w-5 h-5"></i> AI 配對遺失物
+        </button>
+        <button onclick="goTo('page-home')" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium">發布</button>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 9: 物品詳細頁 ==================== -->
+    <div id="page-detail" class="page bg-white">
+      <div class="relative">
+        <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800" class="w-full h-64 object-cover">
+        <div class="absolute top-16 left-4 right-4 flex justify-between">
+          <button onclick="goTo('page-home')" class="p-2 rounded-full glass"><i data-lucide="arrow-left" class="w-5 h-5 text-white"></i></button>
+          <div class="flex gap-2">
+            <button class="p-2 rounded-full glass"><i data-lucide="share-2" class="w-5 h-5 text-white"></i></button>
+            <button class="p-2 rounded-full glass"><i data-lucide="flag" class="w-5 h-5 text-white"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24 -mt-6">
+        <div class="rounded-t-3xl bg-white card-shadow p-6">
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <h1 class="text-xl font-bold text-slate-800">黑色皮夾</h1>
+              <p class="text-slate-500">錢包 · 黑色 · 3/22 遺失</p>
+            </div>
+            <span class="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-sm font-medium">賞金 $500</span>
+          </div>
+          <p class="text-slate-600 mb-4">LV 黑色長夾，內有證件和信用卡，在信義區 101 附近遺失，懇請協助尋找。</p>
+          <div class="rounded-xl bg-slate-100 p-4 mb-4 flex items-center gap-3">
+            <i data-lucide="map-pin" class="w-5 h-5 text-emerald-500"></i>
+            <div>
+              <p class="font-medium text-slate-800">信義區 台北101</p>
+              <p class="text-slate-500 text-sm">台北市信義區市府路 45 號</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 mb-6">
+            <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100" class="w-10 h-10 rounded-full object-cover">
+            <div>
+              <p class="font-medium text-slate-800">王小明</p>
+              <p class="text-slate-500 text-sm">2 小時前發布</p>
+            </div>
+          </div>
+          <button onclick="goTo('page-chat')" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium flex items-center justify-center gap-2">
+            <i data-lucide="message-circle" class="w-5 h-5"></i> 開始聊天
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 10: AI 配對結果 ==================== -->
+    <div id="page-ai-match" class="page gradient-bg-alt">
+      <div class="p-4 pt-16">
+        <button onclick="goTo('page-search')" class="p-2 rounded-full glass mb-4"><i data-lucide="arrow-left" class="w-5 h-5 text-white"></i></button>
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-12 h-12 rounded-2xl bg-violet-500/30 flex items-center justify-center">
+            <i data-lucide="sparkles" class="w-6 h-6 text-violet-300"></i>
+          </div>
+          <div>
+            <h1 class="text-xl font-bold text-white">AI 智慧配對</h1>
+            <p class="text-slate-300 text-sm">為您找到 3 個相似物品</p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <div onclick="goTo('page-detail')" class="rounded-2xl glass p-4 flex gap-4">
+            <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200" class="w-20 h-20 rounded-xl object-cover">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="px-2 py-0.5 bg-emerald-500/50 text-emerald-200 rounded text-xs">92% 相似</span>
+              </div>
+              <h3 class="font-semibold text-white">黑色皮夾</h3>
+              <p class="text-slate-400 text-sm">信義區 · 3/22</p>
+            </div>
+          </div>
+          <div class="rounded-2xl glass p-4 flex gap-4 opacity-75">
+            <img src="https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=200" class="w-20 h-20 rounded-xl object-cover">
+            <div class="flex-1">
+              <span class="px-2 py-0.5 bg-amber-500/50 text-amber-200 rounded text-xs">78% 相似</span>
+              <h3 class="font-semibold text-white mt-1">棕色皮夾</h3>
+              <p class="text-slate-400 text-sm">大安區 · 3/21</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 11: 聊天列表 ==================== -->
+    <div id="page-chat-list" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2">
+        <h1 class="text-xl font-bold text-slate-800">訊息</h1>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24">
+        <div onclick="goTo('page-chat')" class="rounded-2xl bg-white card-shadow p-4 flex gap-4 mb-3">
+          <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100" class="w-14 h-14 rounded-full object-cover">
+          <div class="flex-1 min-w-0">
+            <div class="flex justify-between items-start">
+              <h3 class="font-semibold text-slate-800">王小明</h3>
+              <span class="text-slate-400 text-xs">剛剛</span>
+            </div>
+            <p class="text-slate-500 text-sm truncate">關於黑色皮夾，我有線索...</p>
+            <span class="inline-block w-2 h-2 bg-emerald-500 rounded-full mt-1"></span>
+          </div>
+        </div>
+        <div class="rounded-2xl bg-white card-shadow p-4 flex gap-4 mb-3 opacity-70">
+          <img src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100" class="w-14 h-14 rounded-full object-cover">
+          <div class="flex-1">
+            <div class="flex justify-between">
+              <h3 class="font-semibold text-slate-800">李小姐</h3>
+              <span class="text-slate-400 text-xs">昨天</span>
+            </div>
+            <p class="text-slate-500 text-sm">Nike 鞋子找到了嗎？</p>
+          </div>
+        </div>
+      </div>
+      <div class="tab-bar safe-bottom">
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-home')" class="tab-item"><i data-lucide="home"></i><span>首頁</span></button>
+          <button onclick="goTo('page-chat-list')" class="tab-item active"><i data-lucide="message-circle"></i><span>聊天</span></button>
+        </div>
+        <button onclick="toggleAddModal()" class="tab-item add-btn"><i data-lucide="plus"></i></button>
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-qr')" class="tab-item"><i data-lucide="qr-code"></i><span>QR</span></button>
+          <button onclick="goTo('page-profile')" class="tab-item"><i data-lucide="user"></i><span>我的</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 12: 聊天視窗 ==================== -->
+    <div id="page-chat" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2 flex items-center gap-3 glass">
+        <button onclick="goTo('page-chat-list')" class="p-2 rounded-full"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+        <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100" class="w-10 h-10 rounded-full object-cover">
+        <div class="flex-1">
+          <h3 class="font-semibold text-slate-800">王小明</h3>
+          <p class="text-slate-500 text-sm">黑色皮夾</p>
+        </div>
+      </div>
+      <div class="flex-1 p-4 overflow-y-auto no-scrollbar">
+        <div class="flex justify-start mb-4">
+          <div class="max-w-[80%] rounded-2xl rounded-tl-sm bg-white card-shadow px-4 py-3">
+            <p class="text-slate-700">您好，我在信義區撿到一個黑色皮夾，請問是您遺失的嗎？</p>
+            <span class="text-slate-400 text-xs">10:32</span>
+          </div>
+        </div>
+        <div class="flex justify-end mb-4">
+          <div class="max-w-[80%] rounded-2xl rounded-tr-sm bg-emerald-500 text-white px-4 py-3">
+            <p>是的！可以約個時間見面嗎？非常感謝！</p>
+            <span class="text-emerald-100 text-xs">10:35</span>
+          </div>
+        </div>
+        <div class="flex justify-start mb-4">
+          <div class="max-w-[80%] rounded-2xl rounded-tl-sm bg-white card-shadow px-4 py-3">
+            <p class="text-slate-700">當然可以，下午三點 101 星巴克方便嗎？</p>
+            <span class="text-slate-400 text-xs">10:36</span>
+          </div>
+        </div>
+      </div>
+      <div class="p-4 pb-8 safe-bottom">
+        <div class="flex gap-2 items-end">
+          <button class="p-2 rounded-full bg-white card-shadow"><i data-lucide="image" class="w-5 h-5 text-slate-600"></i></button>
+          <button class="p-2 rounded-full bg-white card-shadow"><i data-lucide="map-pin" class="w-5 h-5 text-slate-600"></i></button>
+          <input type="text" placeholder="輸入訊息..." class="flex-1 py-3 px-4 rounded-2xl bg-white border border-slate-200">
+          <button class="p-3 rounded-full bg-emerald-500"><i data-lucide="send" class="w-5 h-5 text-white"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 13: QR 我的物品 ==================== -->
+    <div id="page-qr" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2">
+        <h1 class="text-xl font-bold text-slate-800">QR 防丟貼紙</h1>
+        <p class="text-slate-500 text-sm">綁定物品，遺失時快速聯繫</p>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24">
+        <div onclick="goTo('page-qr-generate')" class="rounded-2xl glass p-6 flex items-center gap-4 mb-4">
+          <div class="w-14 h-14 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
+            <i data-lucide="plus" class="w-7 h-7 text-emerald-500"></i>
+          </div>
+          <div>
+            <h3 class="font-semibold text-slate-800">新增 QR 物品</h3>
+            <p class="text-slate-500 text-sm">產生專屬 QR Code 貼紙</p>
+          </div>
+        </div>
+        <div class="rounded-2xl bg-white card-shadow p-4 flex gap-4">
+          <div class="w-16 h-16 rounded-xl bg-slate-200 flex items-center justify-center">
+            <i data-lucide="qr-code" class="w-8 h-8 text-slate-500"></i>
+          </div>
+          <div class="flex-1">
+            <h3 class="font-semibold text-slate-800">錢包</h3>
+            <p class="text-slate-500 text-sm">已綁定 · 3/15</p>
+          </div>
+          <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+        </div>
+      </div>
+      <div class="tab-bar safe-bottom">
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-home')" class="tab-item"><i data-lucide="home"></i><span>首頁</span></button>
+          <button onclick="goTo('page-chat-list')" class="tab-item"><i data-lucide="message-circle"></i><span>聊天</span></button>
+        </div>
+        <button onclick="toggleAddModal()" class="tab-item add-btn"><i data-lucide="plus"></i></button>
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-qr')" class="tab-item active"><i data-lucide="qr-code"></i><span>QR</span></button>
+          <button onclick="goTo('page-profile')" class="tab-item"><i data-lucide="user"></i><span>我的</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 14: 產生 QR Code ==================== -->
+    <div id="page-qr-generate" class="page gradient-bg">
+      <div class="p-4 pt-16">
+        <button onclick="goTo('page-qr')" class="p-2 rounded-full glass mb-6"><i data-lucide="arrow-left" class="w-5 h-5 text-white"></i></button>
+        <h1 class="text-xl font-bold text-white mb-2">產生 QR Code</h1>
+        <p class="text-white/80 text-sm mb-6">將此 QR Code 貼在物品上，撿到的人可快速聯繫您</p>
+        <input type="text" placeholder="物品名稱" class="w-full py-3 px-4 rounded-xl glass text-white placeholder-white/60 mb-6">
+        <div class="rounded-3xl glass p-8 flex justify-center mb-6">
+          <div class="w-48 h-48 rounded-2xl bg-white flex items-center justify-center">
+            <i data-lucide="qr-code" class="w-32 h-32 text-slate-800"></i>
+          </div>
+        </div>
+        <button class="w-full py-4 rounded-2xl bg-white text-slate-800 font-medium flex items-center justify-center gap-2">
+          <i data-lucide="download" class="w-5 h-5"></i> 下載 QR Code
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 15: 積分頁 ==================== -->
+    <div id="page-points" class="page bg-slate-50">
+      <div class="p-4 pt-16">
+        <button onclick="goTo('page-profile')" class="p-2 rounded-full -ml-2 mb-4"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+        <div class="rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 p-6 text-white mb-6">
+          <p class="text-amber-100 text-sm mb-1">累積點數</p>
+          <h1 class="text-4xl font-bold">1,250</h1>
+          <p class="text-amber-100 text-sm mt-2">撿到物品 +50 · 完成配對 +100</p>
+        </div>
+        <div class="flex gap-2 mb-4">
+          <button class="flex-1 py-2 rounded-full bg-slate-800 text-white text-sm font-medium">獲得方式</button>
+          <button class="flex-1 py-2 rounded-full bg-slate-200 text-slate-600 text-sm">兌換</button>
+        </div>
+        <h3 class="font-semibold text-slate-800 mb-3">本週排行榜</h3>
+        <div class="space-y-2">
+          <div class="flex items-center gap-4 p-3 rounded-xl bg-white card-shadow">
+            <span class="w-8 h-8 rounded-full bg-amber-400 text-slate-800 font-bold flex items-center justify-center text-sm">1</span>
+            <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100" class="w-10 h-10 rounded-full object-cover">
+            <div class="flex-1">
+              <p class="font-medium text-slate-800">好心人 A</p>
+              <p class="text-slate-500 text-sm">3,200 點</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 16: 通知頁 ==================== -->
+    <div id="page-notify" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2">
+        <div class="flex justify-between items-center">
+          <h1 class="text-xl font-bold text-slate-800">通知</h1>
+          <button class="text-emerald-600 text-sm font-medium">全部已讀</button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-8">
+        <div class="rounded-2xl bg-white card-shadow p-4 mb-3 border-l-4 border-emerald-500">
+          <div class="flex gap-4">
+            <div class="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="sparkles" class="w-5 h-5 text-emerald-500"></i>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-semibold text-slate-800">AI 配對成功！</h3>
+              <p class="text-slate-500 text-sm">您的黑色皮夾可能被找到了，快去看看</p>
+              <span class="text-slate-400 text-xs">5 分鐘前</span>
+            </div>
+          </div>
+        </div>
+        <div class="rounded-2xl bg-white card-shadow p-4 mb-3 opacity-70">
+          <div class="flex gap-4">
+            <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="map-pin" class="w-5 h-5 text-amber-600"></i>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-semibold text-slate-800">附近有人遺失物品</h3>
+              <p class="text-slate-500 text-sm">信義區有 2 筆新遺失物登記</p>
+              <span class="text-slate-400 text-xs">1 小時前</span>
+            </div>
+          </div>
+        </div>
+        <div class="rounded-2xl bg-white card-shadow p-4 mb-3 opacity-70">
+          <div class="flex gap-4">
+            <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="message-circle" class="w-5 h-5 text-blue-600"></i>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-semibold text-slate-800">王小明 傳送訊息</h3>
+              <p class="text-slate-500 text-sm">關於黑色皮夾，我有線索...</p>
+              <span class="text-slate-400 text-xs">2 小時前</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 17: 個人資料 ==================== -->
+    <div id="page-profile" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-4">
+        <div class="flex items-center gap-4 mb-6">
+          <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=200" class="w-20 h-20 rounded-full object-cover ring-4 ring-white card-shadow">
+          <div>
+            <h1 class="text-xl font-bold text-slate-800">王小明</h1>
+            <p class="text-slate-500 text-sm">+886 912 345 678</p>
+            <div class="flex items-center gap-2 mt-2">
+              <span class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-medium">1,250 點</span>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="goTo('page-myposts')" class="rounded-xl glass p-4 text-center">
+            <i data-lucide="package" class="w-6 h-6 mx-auto mb-1 text-slate-600"></i>
+            <p class="text-sm font-medium text-slate-700">我的發布</p>
+            <p class="text-slate-500 text-xs">3</p>
+          </button>
+          <button onclick="goTo('page-points')" class="rounded-xl glass p-4 text-center">
+            <i data-lucide="award" class="w-6 h-6 mx-auto mb-1 text-slate-600"></i>
+            <p class="text-sm font-medium text-slate-700">積分</p>
+            <p class="text-slate-500 text-xs">1,250</p>
+          </button>
+          <button class="rounded-xl glass p-4 text-center">
+            <i data-lucide="heart" class="w-6 h-6 mx-auto mb-1 text-slate-600"></i>
+            <p class="text-sm font-medium text-slate-700">收藏</p>
+            <p class="text-slate-500 text-xs">2</p>
+          </button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-24">
+        <div class="rounded-2xl bg-white card-shadow overflow-hidden">
+          <button class="w-full p-4 flex items-center gap-4 text-left hover:bg-slate-50">
+            <i data-lucide="user" class="w-5 h-5 text-slate-500"></i>
+            <span class="flex-1 text-slate-800">個人資料</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+          <button class="w-full p-4 flex items-center gap-4 text-left hover:bg-slate-50 border-t border-slate-100">
+            <i data-lucide="package" class="w-5 h-5 text-slate-500"></i>
+            <span class="flex-1 text-slate-800">我的遺失物</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+          <button class="w-full p-4 flex items-center gap-4 text-left hover:bg-slate-50 border-t border-slate-100">
+            <i data-lucide="package-check" class="w-5 h-5 text-slate-500"></i>
+            <span class="flex-1 text-slate-800">我的撿到物</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+          <button onclick="goTo('page-settings')" class="w-full p-4 flex items-center gap-4 text-left hover:bg-slate-50 border-t border-slate-100">
+            <i data-lucide="settings" class="w-5 h-5 text-slate-500"></i>
+            <span class="flex-1 text-slate-800">設定</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+        </div>
+      </div>
+      <div class="tab-bar safe-bottom">
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-home')" class="tab-item"><i data-lucide="home"></i><span>首頁</span></button>
+          <button onclick="goTo('page-chat-list')" class="tab-item"><i data-lucide="message-circle"></i><span>聊天</span></button>
+        </div>
+        <button onclick="toggleAddModal()" class="tab-item add-btn"><i data-lucide="plus"></i></button>
+        <div class="tab-bar-group">
+          <button onclick="goTo('page-qr')" class="tab-item"><i data-lucide="qr-code"></i><span>QR</span></button>
+          <button onclick="goTo('page-profile')" class="tab-item active"><i data-lucide="user"></i><span>我的</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 18: 我的發布 ==================== -->
+    <div id="page-myposts" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2">
+        <button onclick="goTo('page-profile')" class="p-2 rounded-full -ml-2 mb-4"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+        <h1 class="text-xl font-bold text-slate-800">我的發布</h1>
+        <div class="flex gap-2 mt-4">
+          <button class="flex-1 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium">遺失物</button>
+          <button class="flex-1 py-2 rounded-full bg-slate-200 text-slate-600 text-sm">撿到物</button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-8">
+        <div onclick="goTo('page-detail')" class="rounded-2xl bg-white card-shadow p-4 flex gap-4 mb-3">
+          <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200" class="w-20 h-20 rounded-xl object-cover">
+          <div class="flex-1">
+            <h3 class="font-semibold text-slate-800">黑色皮夾</h3>
+            <p class="text-slate-500 text-sm">3/22 遺失 · 信義區</p>
+            <span class="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs mt-1">尋找中</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PAGE 19: 設定頁 ==================== -->
+    <div id="page-settings" class="page bg-slate-50">
+      <div class="p-4 pt-16 pb-2">
+        <button onclick="goTo('page-profile')" class="p-2 rounded-full -ml-2 mb-4"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+        <h1 class="text-xl font-bold text-slate-800">設定</h1>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar px-4 pb-8">
+        <div class="rounded-2xl bg-white card-shadow overflow-hidden mb-4">
+          <div class="p-4 flex items-center justify-between">
+            <span class="text-slate-800">推播通知</span>
+            <input type="checkbox" checked class="rounded">
+          </div>
+          <div class="p-4 flex items-center justify-between border-t border-slate-100">
+            <span class="text-slate-800">附近遺失物通知</span>
+            <input type="checkbox" checked class="rounded">
+          </div>
+          <div class="p-4 flex items-center justify-between border-t border-slate-100">
+            <span class="text-slate-800">AI 配對通知</span>
+            <input type="checkbox" checked class="rounded">
+          </div>
+        </div>
+        <div class="rounded-2xl bg-white card-shadow overflow-hidden">
+          <button class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50">
+            <span class="text-slate-800">使用條款</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+          <button class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 border-t border-slate-100">
+            <span class="text-slate-800">隱私政策</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+          <button class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 border-t border-slate-100">
+            <span class="text-slate-800">關於我們</span>
+            <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+          </button>
+        </div>
+        <p class="text-center text-slate-400 text-sm mt-8">找得到 v1.0.0</p>
+      </div>
+    </div>
+
+    <!-- Add Modal -->
+    <div id="add-modal-overlay" onclick="closeAddModal()" class="absolute inset-0 bg-black/30 z-50 hidden"></div>
+    <div id="add-modal" class="add-modal">
+      <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-6"></div>
+      <h3 class="text-lg font-semibold text-slate-800 mb-4 text-center">新增發布</h3>
+      <div class="flex gap-4">
+        <button onclick="goTo('page-add-lost'); closeAddModal()" class="flex-1 rounded-2xl glass p-6 flex flex-col items-center gap-3 hover:bg-white/50 transition">
+          <div class="w-14 h-14 rounded-2xl bg-rose-500/20 flex items-center justify-center">
+            <i data-lucide="search-x" class="w-7 h-7 text-rose-500"></i>
+          </div>
+          <span class="font-medium text-slate-800">遺失物</span>
+          <p class="text-slate-500 text-xs">我弄丟了東西</p>
+        </button>
+        <button onclick="goTo('page-add-found'); closeAddModal()" class="flex-1 rounded-2xl glass p-6 flex flex-col items-center gap-3 hover:bg-white/50 transition">
+          <div class="w-14 h-14 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
+            <i data-lucide="package-check" class="w-7 h-7 text-emerald-500"></i>
+          </div>
+          <span class="font-medium text-slate-800">撿到物</span>
+          <p class="text-slate-500 text-xs">我撿到東西</p>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+
+    function switchHomeTab(tab) {
+      const lostBtn = document.getElementById('home-tab-lost');
+      const foundBtn = document.getElementById('home-tab-found');
+      const lostList = document.getElementById('home-list-lost');
+      const foundList = document.getElementById('home-list-found');
+      if (tab === 'lost') {
+        lostBtn.className = 'flex-1 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium';
+        foundBtn.className = 'flex-1 py-2 rounded-full bg-slate-200 text-slate-600 text-sm';
+        lostList.classList.remove('hidden');
+        foundList.classList.add('hidden');
+      } else {
+        lostBtn.className = 'flex-1 py-2 rounded-full bg-slate-200 text-slate-600 text-sm';
+        foundBtn.className = 'flex-1 py-2 rounded-full bg-emerald-500 text-white text-sm font-medium';
+        lostList.classList.add('hidden');
+        foundList.classList.remove('hidden');
+      }
+    }
+
+    function goTo(pageId) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+      const page = document.getElementById(pageId);
+      if (page) {
+        page.classList.add('active');
+        const tabMap = { 'page-home': 0, 'page-chat-list': 1, 'page-qr': 3, 'page-profile': 4 };
+        if (tabMap[pageId] !== undefined) {
+          document.querySelectorAll('.tab-item')[tabMap[pageId]]?.classList.add('active');
+        }
+        lucide.createIcons();
+      }
+      closeAddModal();
+    }
+
+    function toggleAddModal() {
+      const modal = document.getElementById('add-modal');
+      const overlay = document.getElementById('add-modal-overlay');
+      modal.classList.toggle('show');
+      overlay.classList.toggle('hidden', !modal.classList.contains('show'));
+      lucide.createIcons();
+    }
+
+    function closeAddModal() {
+      document.getElementById('add-modal').classList.remove('show');
+      document.getElementById('add-modal-overlay').classList.add('hidden');
+    }
+
+    // Splash auto redirect
+    setTimeout(() => goTo('page-login'), 2500);
+  </script>
+</body>
+</html>

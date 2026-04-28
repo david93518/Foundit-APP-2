@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  正式版網路安全設定：強制 HTTPS
+  Debug 版由 src/debug/AndroidManifest.xml 的 usesCleartextTraffic=true 覆蓋
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,80 @@
+import {
+  Controller, Get, Post, Patch, Delete, Body, Param, Query,
+  UseGuards, HttpCode, HttpStatus,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ItemsService } from './items.service';
+import { CreateItemDto } from './dto/create-item.dto';
+import { QueryItemDto } from './dto/query-item.dto';
+import { toMobileItem } from './item-mobile.serializer';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { User } from '../common/entities/user.entity';
+
+@ApiTags('物品')
+@Controller('items')
+export class ItemsController {
+  constructor(private readonly itemsService: ItemsService) {}
+
+  @Get()
+  @ApiOperation({ summary: '取得物品列表（支援篩選）' })
+  async findAll(@Query() query: QueryItemDto) {
+    const { data, total, hasMore } = await this.itemsService.findAll(query);
+    return { success: true, data: data.map(toMobileItem), total, hasMore };
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: '全平台統計（首頁榮譽帶 / 分類角標）' })
+  async stats() {
+    const data = await this.itemsService.getStats();
+    return { success: true, data };
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: '取得單一物品詳情' })
+  async findOne(@Param('id') id: string) {
+    const data = await this.itemsService.findOne(id);
+    return { success: true, data: toMobileItem(data) };
+  }
+
+  @Post()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '新增物品（遺失物或撿到物）' })
+  async create(@Body() dto: CreateItemDto, @CurrentUser() user: User) {
+    const data = await this.itemsService.create(dto, user);
+    return { success: true, data: toMobileItem(data) };
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '更新物品資訊' })
+  async update(
+    @Param('id') id: string,
+    @Body() dto: Partial<CreateItemDto>,
+    @CurrentUser() user: User,
+  ) {
+    const data = await this.itemsService.update(id, dto, user);
+    return { success: true, data: toMobileItem(data) };
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '刪除物品' })
+  async remove(@Param('id') id: string, @CurrentUser() user: User) {
+    await this.itemsService.remove(id, user);
+    return { success: true, message: '已刪除' };
+  }
+
+  @Patch(':id/resolve')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '標記物品已找到/已解決' })
+  async resolve(@Param('id') id: string, @CurrentUser() user: User) {
+    await this.itemsService.resolve(id, user);
+    return { success: true, message: '已標記為找到' };
+  }
+}

@@ -1,0 +1,129 @@
+<resources>
+    <string name="app_name">找得到</string>
+
+    <!-- 登入相關 -->
+    <string name="login_title">歡迎使用找得到</string>
+    <string name="login_subtitle">失物共享平台，讓遺失的物品找到回家的路</string>
+    <string name="phone_hint">請輸入手機號碼</string>
+    <string name="send_otp">發送驗證碼</string>
+    <string name="otp_hint">請輸入 6 位數驗證碼</string>
+    <string name="verify_otp">確認登入</string>
+    <string name="login_with_google">Google 帳號登入</string>
+    <string name="login_with_line">LINE 帳號登入</string>
+    <string name="agree_terms">登入即表示您同意我們的</string>
+    <string name="terms_of_service">使用條款</string>
+    <string name="privacy_policy">隱私政策</string>
+    <string name="and">及</string>
+
+    <!-- 首頁 -->
+    <string name="tab_home">首頁</string>
+    <string name="tab_search">搜尋</string>
+    <string name="tab_map">地圖</string>
+    <string name="tab_chat">聊天</string>
+    <string name="tab_profile">我的</string>
+    <string name="lost_items">遺失物</string>
+    <string name="found_items">撿到物</string>
+    <string name="all_items">全部</string>
+    <string name="nearby_items">附近物品</string>
+
+    <!-- 物品相關 -->
+    <string name="add_lost_item">登記遺失物</string>
+    <string name="add_found_item">登記撿到物</string>
+    <string name="item_title">物品名稱</string>
+    <string name="item_category">分類</string>
+    <string name="item_description">詳細描述</string>
+    <string name="item_color">顏色</string>
+    <string name="item_location">遺失/撿到地點</string>
+    <string name="item_date">日期時間</string>
+    <string name="item_reward">懸賞金額</string>
+    <string name="item_photos">新增照片</string>
+    <string name="submit">發布</string>
+    <string name="mark_found">標記已找到</string>
+    <string name="edit_item">編輯</string>
+    <string name="delete_item">刪除</string>
+    <string name="start_chat">開始聊天</string>
+    <string name="ai_match">AI 智慧配對</string>
+
+    <!-- 搜尋 -->
+    <string name="search_hint">搜尋遺失物或撿到物</string>
+    <string name="filter">篩選</string>
+    <string name="category">分類</string>
+    <string name="date_range">日期範圍</string>
+    <string name="area">地區</string>
+    <string name="has_reward">有懸賞</string>
+    <string name="apply_filter">套用</string>
+    <string name="clear_filter">清除</string>
+
+    <!-- 聊天 -->
+    <string name="message_hint">輸入訊息…</string>
+    <string name="send">傳送</string>
+    <string name="no_chats">尚無聊天記錄</string>
+
+    <!-- QR Code -->
+    <string name="qr_title">我的 QR 防丟標籤</string>
+    <string name="generate_qr">產生 QR Code</string>
+    <string name="scan_qr">掃描 QR Code</string>
+    <string name="qr_item_name">物品名稱</string>
+    <string name="download_qr">下載 QR Code</string>
+    <string name="qr_description">將 QR Code 貼在您的貴重物品上，撿到者掃描後可立即聯絡您！</string>
+
+    <!-- AI 配對 -->
+    <string name="ai_match_title">AI 智慧配對結果</string>
+    <string name="ai_matching">AI 配對中，請稍候…</string>
+    <string name="ai_match_empty">未找到相似物品，請稍後再試</string>
+    <string name="similarity">相似度</string>
+
+    <!-- 個人資料 -->
+    <string name="profile_title">我的資料</string>
+    <string name="my_lost_items">我的遺失物</string>
+    <string name="my_found_items">我的撿到物</string>
+    <string name="my_points">我的積分</string>
+    <string name="settings">設定</string>
+    <string name="logout">登出</string>
+
+    <!-- 通知 -->
+    <string name="notifications">通知</string>
+    <string name="no_notifications">尚無通知</string>
+
+    <!-- 通用 -->
+    <string name="loading">載入中…</string>
+    <string name="retry">重試</string>
+    <string name="cancel">取消</string>
+    <string name="confirm">確認</string>
+    <string name="save">儲存</string>
+    <string name="error_network">網路連線失敗，請檢查您的網路設定</string>
+    <string name="error_unknown">發生未知錯誤，請稍後再試</string>
+    <string name="success">成功</string>
+
+    <!-- 物品分類 -->
+    <string-array name="item_categories">
+        <item>錢包/皮夾</item>
+        <item>手機/平板</item>
+        <item>鑰匙</item>
+        <item>文件/證件</item>
+        <item>包包/背包</item>
+        <item>眼鏡</item>
+        <item>首飾/飾品</item>
+        <item>服飾</item>
+        <item>電子產品</item>
+        <item>寵物</item>
+        <item>交通工具</item>
+        <item>其他</item>
+    </string-array>
+
+    <!-- 顏色選項 -->
+    <string-array name="item_colors">
+        <item>黑色</item>
+        <item>白色</item>
+        <item>灰色</item>
+        <item>紅色</item>
+        <item>橘色</item>
+        <item>黃色</item>
+        <item>綠色</item>
+        <item>藍色</item>
+        <item>紫色</item>
+        <item>棕色</item>
+        <item>粉紅色</item>
+        <item>其他</item>
+    </string-array>
+</resources>

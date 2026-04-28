@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug build 不加任何覆蓋，由 src/debug/res/xml/network_security_config.xml 處理明文流量 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

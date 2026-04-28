@@ -1,0 +1,71 @@
+name: foundit
+description: "找得到 — 失物共享平台（Flutter 版）"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # UI / 字體 / 圖示
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.10+1
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+  lottie: ^3.1.3
+  flutter_staggered_animations: ^1.1.1
+  smooth_page_indicator: ^1.2.0+3
+
+  # 狀態管理與路由
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.6.2
+
+  # 網路 / 序列化
+  dio: ^5.7.0
+  json_annotation: ^4.9.0
+
+  # 本地儲存
+  shared_preferences: ^2.3.3
+  flutter_secure_storage: ^9.2.2
+
+  # 第三方登入
+  google_sign_in: ^6.2.1
+
+  # 圖片 / 相機
+  image_picker: ^1.1.2
+  photo_view: ^0.15.0
+
+  # 地圖（先保留 flutter_map，之後可換 google_maps_flutter）
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  geolocator: ^13.0.2
+
+  # QR
+  mobile_scanner: ^6.0.1
+  qr_flutter: ^4.1.0
+
+  # 工具
+  intl: ^0.19.0
+  url_launcher: ^6.3.1
+  socket_io_client: ^3.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.13
+  json_serializable: ^6.8.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/illustrations/
