@@ -6,7 +6,7 @@
 .pub-cache/
 .pub/
 build/
-pubspec.lock
+
 
 # IDE
 .idea/
@@ -26,6 +26,7 @@ android/app/*.jks
 # iOS
 ios/Pods/
 ios/.symlinks/
+ios/Flutter/GoogleSignIn.xcconfig
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
 

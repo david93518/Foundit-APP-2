@@ -1,83 +1,38 @@
-# 找得到 Foundit｜Flutter 版
+# FOUND !T｜Flutter 前端
 
-> 台灣取向的失物共享平台 — 全新 Flutter 設計版本
+台灣失物共享 App。此專案為目前主前端，使用 Flutter 3.47 / Dart 3.13、Riverpod、go_router、Dio、flutter_map 與 Noto Sans TC。後端評估、部署設定與正式上線限制見 [根目錄 README](../README.md)。
 
-這是從 Kotlin/Jetpack Compose 版本重新設計的 Flutter 專案，主打 **現代感、溫暖、具呼吸感** 的視覺語言，擺脫傳統 Material 樣板風格。
+## 本機體驗
 
----
-
-## 設計語言
-
-| 元素 | 值 |
-|------|-----|
-| 主色（Indigo） | `#4F46E5` |
-| 遺失物（Coral） | `#F97316` |
-| 撿到物（Emerald） | `#10B981` |
-| 賞金（Amber） | `#F59E0B` |
-| 背景（奶白） | `#FAFAF9` |
-| 字體 | Noto Sans TC + Inter |
-| 圓角 | 16 / 20 / 28 px（大圓角） |
-| 陰影 | 柔和多層（非 Material 預設） |
-
----
-
-## 技術堆疊
-
-- **Flutter 3.22+** / **Dart 3.3+**
-- **狀態管理：** Riverpod
-- **路由：** go_router
-- **網路：** Dio
-- **地圖：** flutter_map（OpenStreetMap）
-- **QR：** mobile_scanner + qr_flutter
-
----
-
-## 專案結構
-
-```
-lib/
-├── main.dart                   # 進入點
-├── app.dart                    # MaterialApp + 主題
-├── core/
-│   ├── theme/                  # 設計系統（顏色、字體、間距、陰影）
-│   ├── router/                 # 路由
-│   ├── constants/              # 全域常數
-│   └── utils/                  # 工具函式
-├── data/
-│   ├── models/                 # 資料模型（對應後端 DTO）
-│   ├── api/                    # Dio client + endpoints
-│   ├── repositories/           # Repository 層
-│   └── mock/                   # Mock 資料
-└── presentation/
-    ├── screens/                # 各畫面
-    └── widgets/                # 共用 UI 元件
-```
-
----
-
-## 啟動步驟
-
-### 1. 安裝 Flutter
-從 [flutter.dev](https://docs.flutter.dev/get-started/install) 下載並安裝，把 `flutter\bin` 加入 `PATH`。
-
-### 2. 取得相依套件
-```bash
-cd foundit_flutter
+```powershell
 flutter pub get
+flutter run -d chrome --dart-define=USE_MOCK=true
 ```
 
-### 3. 執行
-```bash
-flutter run
+`USE_MOCK` 預設 false；必須明確開啟才使用示範資料。正式 API 以 `API_BASE_URL` 與 `SOCKET_HOST` dart-define 設定。不要把體驗模式當成正式 SMS、聊天或認領服務。
+
+Windows 工作環境的 Flutter 位於 `D:\dev\flutter`。若依賴已解析而桌面 symlink 受開發人員模式限制，可使用 `--no-pub` 建置已驗證的 Web 版：
+
+```powershell
+flutter build web --no-pub --no-wasm-dry-run --dart-define=USE_MOCK=true
+node tool/serve-preview.mjs
 ```
 
----
+本機預覽位於 http://127.0.0.1:4173 。
 
-## 後端串接
+## 品牌與排版
 
-預設連線到您原有的 NestJS 後端：
-- Android 模擬器：`http://10.0.2.2:3000/api/v1`
-- iOS 模擬器：`http://localhost:3000/api/v1`
-- 實機：改成電腦 IP（例如 `http://192.168.1.100:3000/api/v1`）
+- 炭黑 `#282B30`、暖白 `#FCFAF7`、陶橘品牌 `#C64B30`；小字操作色 `#BA4329`。
+- `assets/brand` 保存原創 FOUND !T SVG 字標、括角驚嘆號符號及深淺版 App icon。
+- `lib/presentation/widgets/brand_mark.dart` 使用 SVG，縮小時可改用獨立符號。
+- 文字依系統縮放；按鈕採最小尺寸及內容高度，長內容換行／捲動。
+- 主要動畫尊重減少動態設定；中文字型授權見 `assets/fonts/OFL.txt`。
 
-請於 `lib/core/constants/app_constants.dart` 修改 `baseUrl`。
+## 驗證
+
+```powershell
+flutter test --no-pub
+flutter analyze --no-pub --no-fatal-infos
+```
+
+測試包含搜尋、篩選、刊登、登入、QR、收藏、訊息、個人資料、失敗重試，並以實際 Noto Sans TC 覆蓋手機／橫向／平板／桌面及 100%／130%／200% 字級。測試用相機、相片選擇、上傳與地圖圖磚採可控制替身；真機硬體、相機／定位權限、SMS、正式 API 仍需另行驗收。

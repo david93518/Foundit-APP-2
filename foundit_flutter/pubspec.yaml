@@ -4,8 +4,8 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
-  flutter: ">=3.22.0"
+  sdk: '>=3.13.0 <4.0.0'
+  flutter: ">=3.47.0"
 
 dependencies:
   flutter:
@@ -43,7 +43,7 @@ dependencies:
   photo_view: ^0.15.0
 
   # 地圖（先保留 flutter_map，之後可換 google_maps_flutter）
-  flutter_map: ^7.0.2
+  flutter_map: 8.3.2
   latlong2: ^0.9.1
   geolocator: ^13.0.2
 
@@ -52,9 +52,10 @@ dependencies:
   qr_flutter: ^4.1.0
 
   # 工具
-  intl: ^0.19.0
+  intl: ^0.20.3
   url_launcher: ^6.3.1
   socket_io_client: ^3.1.4
+  google_sign_in_web: 0.12.4+4
 
 dev_dependencies:
   flutter_test:
@@ -64,8 +65,17 @@ dev_dependencies:
   json_serializable: ^6.8.0
 
 flutter:
+  # Keep the locked native plugins on one dependency manager for iOS builds.
+  config:
+    enable-swift-package-manager: false
   uses-material-design: true
   assets:
     - assets/images/
     - assets/icons/
     - assets/illustrations/
+
+
+  fonts:
+    - family: NotoSansTC
+      fonts:
+        - asset: assets/fonts/NotoSansTC.ttf
