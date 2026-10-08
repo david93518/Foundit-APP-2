@@ -4,14 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'core/constants/app_constants.dart';
 import 'core/router/app_router.dart';
 import 'core/services/chat_socket_service.dart';
+import 'core/services/push_notifications.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'data/api/api_client.dart';
 import 'presentation/providers/auth_provider.dart';
+import 'presentation/providers/chat_provider.dart';
+import 'presentation/providers/core_providers.dart';
+import 'presentation/providers/notifications_provider.dart';
 import 'presentation/providers/theme_provider.dart';
 
 class FounditApp extends ConsumerStatefulWidget {
@@ -24,7 +29,12 @@ class FounditApp extends ConsumerStatefulWidget {
 class _FounditAppState extends ConsumerState<FounditApp>
     with WidgetsBindingObserver {
   StreamSubscription<void>? _unauthorizedSub;
+  final List<StreamSubscription<Object?>> _pushSubs = [];
   final _messenger = GlobalKey<ScaffoldMessengerState>();
+  GoRouter? _router;
+
+  /// 還沒登入完成前點了通知：登入後再打開。
+  String? _pendingChat;
   Brightness _platform =
       WidgetsBinding.instance.platformDispatcher.platformBrightness;
 
@@ -43,6 +53,66 @@ class _FounditAppState extends ConsumerState<FounditApp>
         const SnackBar(content: Text('登入已過期，請重新登入')),
       );
     });
+
+    final push = ref.read(pushNotificationsProvider);
+    _pushSubs
+      ..add(push.openedChats.listen(_openChat))
+      ..add(push.foreground.listen(_onForegroundPush));
+    unawaited(push.initialize().then((_) {
+      if (!mounted) return;
+      final pending = push.pendingOpen;
+      push.pendingOpen = null;
+      if (pending != null) _openChat(pending);
+      final userId = ref.read(authProvider).user?.id;
+      if (userId != null) unawaited(push.registerFor(userId));
+    }));
+  }
+
+  void _openChat(String chatId) {
+    if (!ref.read(authProvider).isLoggedIn || _router == null) {
+      _pendingChat = chatId;
+      return;
+    }
+    _pendingChat = null;
+    final target = '/chat/$chatId';
+    if (_currentPath() == target) return;
+    _router!.push(target);
+  }
+
+  /// 目前最上層的頁面。push 進來的頁面不會反映在 configuration.uri，要看最後一個 match。
+  String? _currentPath() {
+    final router = _router;
+    if (router == null) return null;
+    final config = router.routerDelegate.currentConfiguration;
+    if (config.isEmpty) return null;
+    final last = config.last;
+    return (last is ImperativeRouteMatch ? last.matches : config).uri.path;
+  }
+
+  void _onForegroundPush(ChatPush push) {
+    ref
+      ..invalidate(chatsProvider)
+      ..invalidate(chatUnreadTotalProvider)
+      ..invalidate(notificationsProvider)
+      ..invalidate(unreadCountAsyncProvider);
+    // 正在看這個對話：訊息已經即時出現在畫面上。
+    if (_currentPath() == '/chat/${push.chatId}') return;
+    final text = [push.title, push.body].where((s) => s.isNotEmpty).join('：');
+    _messenger.currentState
+      ?..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            text.isEmpty ? '你有一則新訊息' : text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          action: SnackBarAction(
+            label: '查看',
+            onPressed: () => _openChat(push.chatId),
+          ),
+        ),
+      );
   }
 
   @override
@@ -55,6 +125,9 @@ class _FounditAppState extends ConsumerState<FounditApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _unauthorizedSub?.cancel();
+    for (final sub in _pushSubs) {
+      sub.cancel();
+    }
     super.dispose();
   }
 
@@ -66,6 +139,16 @@ class _FounditAppState extends ConsumerState<FounditApp>
     ) {
       if (previous != next) {
         ref.read(chatSocketServiceProvider).disconnect();
+        final push = ref.read(pushNotificationsProvider);
+        if (next != null) {
+          unawaited(push.registerFor(next));
+          final pending = _pendingChat;
+          if (pending != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) => _openChat(pending));
+          }
+        } else if (previous != null) {
+          unawaited(push.unregister());
+        }
       }
     });
     final brightness = ref.watch(themeModeProvider).resolve(_platform);
@@ -89,7 +172,7 @@ class _FounditAppState extends ConsumerState<FounditApp>
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
-      routerConfig: ref.watch(routerProvider(brightness)),
+      routerConfig: _router = ref.watch(routerProvider(brightness)),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

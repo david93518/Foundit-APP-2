@@ -1,11 +1,15 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:gal/gal.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_snackbar.dart';
+import '../../../core/utils/qr_tag_image.dart';
 import '../../../data/models/qr_item.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
@@ -369,8 +373,137 @@ class _QrPreview extends StatelessWidget {
               ),
             ),
           ],
+          if (!isDemo && data.trim().isNotEmpty) ...[
+            const SizedBox(height: 24),
+            _QrActions(key: ValueKey('qr-actions-${tag.id}'), tag: tag),
+          ],
         ],
       ),
+    );
+  }
+}
+
+/// 存成可列印的 PNG，或交給系統分享面板（LINE、AirDrop、列印⋯）。
+class _QrActions extends StatefulWidget {
+  const _QrActions({super.key, required this.tag});
+  final QrItemModel tag;
+  @override
+  State<_QrActions> createState() => _QrActionsState();
+}
+
+class _QrActionsState extends State<_QrActions> {
+  final _shareKey = GlobalKey();
+  bool _busy = false;
+
+  String get _fileName {
+    final id = widget.tag.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+    return 'foundit-tag-${id.length > 8 ? id.substring(0, 8) : id}';
+  }
+
+  Future<Uint8List> _render() =>
+      renderQrTagPng(data: widget.tag.qrCode, name: widget.tag.name);
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _save() => _run(() async {
+    try {
+      final bytes = await _render();
+      // 瀏覽器沒有相簿，交給分享（不支援時會直接下載）。
+      if (kIsWeb) return await _shareBytes(bytes);
+      if (!await Gal.hasAccess() && !await Gal.requestAccess()) {
+        if (mounted) {
+          AppSnackbar.error(context, '請到系統設定允許 FOUND !T 加入照片，再存一次。');
+        }
+        return;
+      }
+      await Gal.putImageBytes(bytes, name: _fileName);
+      if (mounted) AppSnackbar.success(context, '已存到相簿，可以直接列印或貼上。');
+    } on GalException catch (e) {
+      if (!mounted) return;
+      AppSnackbar.error(
+        context,
+        switch (e.type) {
+          GalExceptionType.accessDenied => '請到系統設定允許 FOUND !T 加入照片，再存一次。',
+          GalExceptionType.notEnoughSpace => '裝置空間不足，請清出空間後再試。',
+          _ => '未能存到相簿，請改用「分享」。',
+        },
+      );
+    } catch (_) {
+      if (mounted) AppSnackbar.error(context, '未能存到相簿，請改用「分享」。');
+    }
+  });
+
+  Future<void> _share() => _run(() async {
+    try {
+      await _shareBytes(await _render());
+    } catch (_) {
+      if (mounted) AppSnackbar.error(context, '暫時無法分享，請稍後再試。');
+    }
+  });
+
+  Future<void> _shareBytes(Uint8List bytes) async {
+    // iPad 的分享面板需要錨點，否則會直接失敗。
+    final box = _shareKey.currentContext?.findRenderObject() as RenderBox?;
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile.fromData(bytes, mimeType: 'image/png')],
+        fileNameOverrides: ['$_fileName.png'],
+        subject: 'FOUND !T 防丟牌：${widget.tag.name}',
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = ButtonStyle(
+      minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+    );
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton.icon(
+            key: const ValueKey('qr-save'),
+            onPressed: _busy ? null : _save,
+            style: style.merge(
+              FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.onPrimary,
+              ),
+            ),
+            icon: const Icon(Icons.download_rounded, size: 20),
+            label: Text(kIsWeb ? '下載圖片' : '存到相簿'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: OutlinedButton.icon(
+            key: _shareKey,
+            onPressed: _busy ? null : _share,
+            style: style.merge(
+              OutlinedButton.styleFrom(
+                foregroundColor: AppColors.textPrimary,
+                side: const BorderSide(color: AppColors.divider),
+              ),
+            ),
+            icon: const Icon(Icons.ios_share_rounded, size: 20),
+            label: const Text('分享'),
+          ),
+        ),
+      ],
     );
   }
 }

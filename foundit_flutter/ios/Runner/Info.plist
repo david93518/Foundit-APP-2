@@ -61,11 +61,19 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 
+	<!-- FCM 推播：讓通知在背景送達時能更新角標 -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+
 	<!-- image_picker：拍照 / 相簿存取權限說明（App Store 必填） -->
 	<key>NSCameraUsageDescription</key>
 	<string>FOUND !T 使用相機拍攝物品照片及掃描防丟 QR Code。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>FOUND !T 讓你選擇相簿中的照片，描述遺失或拾獲的物品。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>FOUND !T 把你的防丟牌 QR 圖片存到相簿，方便列印或貼在物品上。</string>
 
 	<!-- 地理位置（地圖 / 附近物品） -->
 	<key>NSLocationWhenInUseUsageDescription</key>

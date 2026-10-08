@@ -59,6 +59,22 @@ class AppConstants {
     defaultValue: '992454620238-b2g6kvo7lf06eslnqvlt3cu2gqc58ebq.apps.googleusercontent.com',
   );
 
+  /// FCM 推播（Firebase 專案 foundit-873c1）。Android 讀 google-services.json；
+  /// iOS 不放 GoogleService-Info.plist，改由 build 參數帶入，未提供時 iOS 推播停用。
+  static const String firebaseProjectId = String.fromEnvironment(
+    'FIREBASE_PROJECT_ID',
+    defaultValue: 'foundit-873c1',
+  );
+  static const String firebaseSenderId = String.fromEnvironment(
+    'FIREBASE_SENDER_ID',
+    defaultValue: '324414366919',
+  );
+  static const String firebaseIosApiKey =
+      String.fromEnvironment('FIREBASE_IOS_API_KEY');
+  static const String firebaseIosAppId =
+      String.fromEnvironment('FIREBASE_IOS_APP_ID');
+  static const String iosBundleId = 'com.david93518.foundit';
+
   static const String appName = 'FOUND !T';
   static const String appSlogan = '失物共享平台';
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 推播。只在 build_real_ios.py 帶入 Firebase iOS 設定時才會經由 xcconfig 啟用。 -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

@@ -5,6 +5,9 @@ import '../mock/mock_items.dart';
 abstract class ChatRepository {
   Future<List<Chat>> list();
   Future<Chat?> createChat({required String itemId});
+
+  /// 掃到防丟牌後直接聯絡物主；物主本人、已撤銷或被封鎖時後端會拒絕。
+  Future<Chat?> createChatForTag({required String qrCode});
   Future<List<Message>> messages(String chatId, {int page = 1});
   Future<Message?> send({
     required String chatId,
@@ -82,6 +85,11 @@ class MockChatRepository implements ChatRepository {
     );
     _chats.insert(0, chat);
     return chat;
+  }
+
+  @override
+  Future<Chat?> createChatForTag({required String qrCode}) async {
+    throw UnimplementedError('體驗模式不會聯絡真實物主');
   }
 
   @override
@@ -193,6 +201,16 @@ class RemoteChatRepository implements ChatRepository {
     final res = await _api.post<Map<String, dynamic>>(
       '/chats',
       data: {'item_id': itemId},
+    );
+    final data = res.data?['data'] as Map<String, dynamic>?;
+    return data == null ? null : Chat.fromJson(data);
+  }
+
+  @override
+  Future<Chat?> createChatForTag({required String qrCode}) async {
+    final res = await _api.post<Map<String, dynamic>>(
+      '/chats',
+      data: {'qr_code': qrCode},
     );
     final data = res.data?['data'] as Map<String, dynamic>?;
     return data == null ? null : Chat.fromJson(data);

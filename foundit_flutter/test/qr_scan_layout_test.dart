@@ -120,7 +120,7 @@ void main() {
                       builder: (sheetContext) => QrScanResultSheet(
                         itemName: '有綠色恐龍吊飾與藍色繩結的深棕色皮革鑰匙包',
                         ownerName: '住在大安森林公園附近的物主陳先生',
-                        ownerPhone: '+886 912 345 678（平日下午六點後方便接聽）',
+                        onContact: () {},
                         onContinue: () => Navigator.pop(sheetContext),
                       ),
                     ),
@@ -137,10 +137,15 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.ensureVisible(find.text('繼續掃描'));
         await tester.pumpAndSettle();
-        expect(
-          tester.getSize(find.widgetWithText(FilledButton, '繼續掃描')).height,
-          greaterThanOrEqualTo(48),
-        );
+        for (final label in ['傳訊息給物主', '繼續掃描']) {
+          expect(
+            tester.getSize(find.ancestor(
+              of: find.text(label),
+              matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+            ).first).height,
+            greaterThanOrEqualTo(48),
+          );
+        }
         await tester.tap(find.text('繼續掃描'));
         await tester.pumpAndSettle();
         expect(find.byType(QrScanResultSheet), findsNothing);
