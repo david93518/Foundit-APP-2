@@ -1,3 +1,60 @@
+# 2026-10-04｜FOUND !T UI / UX 重製
+
+**目前尚未可公開營運或送審。** 後端安全、真實串接、管理後台、刪帳、部署與原生交付的實際缺口，已整理為 [上架前修復清單](docs/LAUNCH_READINESS.md) 與 [上架驗收表](docs/RELEASE_ACCEPTANCE.md)，含問題位置、修法、優先級及驗收條件；[查核證據](docs/evidence/2026-10-04/README.md) 保存本輪依賴掃描與聊天契約驗證。這些是待修交接文件，並非修復完成報告。
+
+目前主前端為 `foundit_flutter`（Flutter 3.47 / Dart 3.13），保留 NestJS / PostgreSQL 後端。舊 Kotlin 專案仍保留作參考。新版不是一張設計稿：探索、搜尋／22縣市與分類篩選、分頁、詳細頁、收藏、三步刊登、我的刊登與結案、地圖、示範訊息和 QR 管理都能操作。
+
+## 啟動新版
+
+```powershell
+cd foundit_flutter
+flutter pub get
+flutter run -d chrome --dart-define=USE_MOCK=true
+```
+
+本次工作環境的 SDK 在 `D:\dev\flutter`；Windows 若未開啟系統的開發人員模式，`flutter pub get` 可能在桌面平台外掛 symlink 階段報錯，但依賴已解析。本次已驗證使用現有依賴的 Web 建置：
+
+```powershell
+D:\dev\flutter\bin\flutter.bat build web --no-pub --no-wasm-dry-run --dart-define=USE_MOCK=true
+node tool/serve-preview.mjs
+```
+
+開啟 http://127.0.0.1:4173 。此預覽只監聽本機，沒有公開部署。Android / iOS 共用這套 Flutter UI；本次未做 APK／IPA 簽署或真機驗證。
+
+## 體驗與正式資料
+
+- `USE_MOCK` 預設 **false**，只有明確指定 `--dart-define=USE_MOCK=true` 才使用示範模式。
+- 體驗版的刊登、結案與收藏保存於這台裝置；Web 是瀏覽器儲存空間。照片以 data URI 保存，請勿上傳敏感資料作測試。
+- 示範對話與 QR 清單是工作階段資料，不會傳送給真實使用者。示範 QR 不是公開認領連結。
+- 真實 API 保留現有 repositories，以 `API_BASE_URL` 與 `SOCKET_HOST` 設定。後端已補上實際的縣市篩選。
+- 正式上線前必須完成後端登入驗證修正與 SMS 串接；原 Google token 驗證失敗 fallback、LINE 未驗證 token 等問題尚未納入這次前端重製。新版移除 Google／LINE 登入入口。原 AI 服務為規則比對，未做圖片辨識，新版不宣稱已具備 AI 配對能力。
+
+## 設計與驗證
+
+第三版建立 FOUND !T 自有識別：炭黑、暖白與陶橘；自繪幾何字標，以及用定位括角包住驚嘆號的防丟符號。SVG 母檔、深淺版本及 PNG 預覽位於 `foundit_flutter/assets/brand`；Android／iOS／Web App 圖示已一併替換。小字操作色另外調深，文字與實際底色的對比納入測試。
+
+Finding All 僅作失物探索流程的參考：https://play.google.com/store/apps/details?id=com.sejong.findingall 。保留緊湊分類、橫向物品列表、浮動刊登入口與四項手機導覽；色彩、字標與圖示為 FOUND !T 自有設計。內建 Noto Sans TC，字型授權見 `assets/fonts/OFL.txt`。主要動效尊重減少動態設定，表單逐步驗證，登入不丟刊登草稿，收藏／建立／結案都有實際狀態變更。首次進入直接探索，不強迫註冊。
+
+自動測試使用實際中文字型，涵蓋 320×568、390×844、844×390 橫向、768×1024、1440×900，並測試 100%／130%／200% 文字、長名稱、鍵盤與安全邊界。主要頁面及表單已取消會截字的固定高度；分類、導覽、彈窗和操作區可隨內容換行或捲動。功能測試涵蓋搜尋／篩選、刊登草稿、照片刪除與上傳失敗重試、登入與 OTP 重送倒數、收藏、訊息狀態、QR 管理、個人資料保存，以及離線和無資料狀態。首頁可見控制項亦檢查具名與 48px 點擊範圍。
+
+此次 Flutter **77/77 測試通過**、Web release 建置成功；Dart analyze 無 error／warning，保留 11 項 info 提示。驗證命令如下；`foundit_flutter/build/final-tests.txt`、`foundit_flutter/build/final-analyze.txt`、`foundit_flutter/build/final-build.txt` 保存此次本機執行結果。瀏覽器預覽仍為示範資料；這些檢查不代表 Android／iOS 真機、相機／定位權限、簡訊或正式 API 已驗收。後端既有 7 項測試及 TypeScript 檢查在前一輪通過。
+
+```powershell
+flutter test --no-pub
+flutter analyze --no-pub --no-fatal-infos
+# 後端
+cd ../Foundit/backend
+npm test -- --runInBand
+npx tsc --noEmit --incremental false
+```
+
+第一版插畫 `assets/illustrations/reconnect.png` 保留為素材，目前首頁不使用；此插畫使用內建 image_gen 產生。提示詞：Editorial 3D still life for a Taiwan lost-and-found app: coral-orange looping cord connecting a sage-green keyring with two brushed-metal keys, a warm-cream wallet and ivory earbud case; tactile matte materials, pale cream seamless background, soft studio light, restrained 3:2 composition, no text, logos or people.
+
+示範物品照片來自原型使用的 Unsplash 圖片端點，已保存於 `assets/images`，避免核心畫面依賴第三方圖片載入：`photo-1590874103328-eac38a683ce7`、`photo-1600294037681-c80b4cb5b434`、`photo-1627123424574-724758594e93`、`photo-1553062407-98eeb64c6a62`。
+
+以下保留舊版文件供既有 API 與部署設定參考；其中「已完成」、AI、登入與部署描述不作驗收依據，請以目前程式及 [上架前修復清單](docs/LAUNCH_READINESS.md) 所列證據與限制為準。
+
+---
 # 找得到 Foundit｜失物共享平台
 
 > 版本：1.0.0 ｜ 最後更新：2026/04

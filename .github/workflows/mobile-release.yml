@@ -1,0 +1,85 @@
+name: Mobile release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ios:
+        description: 同時編譯 iOS（不上架簽章）
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - name: Configure upload keystore
+        working-directory: foundit_flutter
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -eu
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "缺少 Android 簽章密鑰。請在 GitHub Actions secrets 設定 ANDROID_KEYSTORE_BASE64、ANDROID_KEYSTORE_PASSWORD、ANDROID_KEY_PASSWORD、ANDROID_KEY_ALIAS。"
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=%s\n' \
+            "$ANDROID_KEYSTORE_PASSWORD" \
+            "$ANDROID_KEY_PASSWORD" \
+            "$ANDROID_KEY_ALIAS" \
+            "upload-keystore.jks" > android/key.properties
+          chmod 600 android/key.properties android/app/upload-keystore.jks
+      - name: Build release APK
+        working-directory: foundit_flutter
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          set -eu
+          flutter pub get
+          defines="--dart-define=API_BASE_URL=https://api.foundit.tw/api/v1 --dart-define=SOCKET_HOST=https://api.foundit.tw --dart-define=USE_MOCK=false"
+          if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
+            defines="$defines --dart-define=GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID}"
+          fi
+          flutter build apk --release $defines
+      - uses: actions/upload-artifact@v4
+        with:
+          name: foundit-android-apk
+          path: foundit_flutter/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS compile
+    if: ${{ inputs.ios }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - working-directory: foundit_flutter
+        run: |
+          set -eu
+          flutter pub get
+          flutter build ios --release --no-codesign \
+            --dart-define=API_BASE_URL=https://api.foundit.tw/api/v1 \
+            --dart-define=SOCKET_HOST=https://api.foundit.tw \
+            --dart-define=USE_MOCK=false
