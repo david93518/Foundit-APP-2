@@ -23,10 +23,7 @@ class TypeBadge extends StatelessWidget {
         horizontal: dense ? AppSpacing.sm : AppSpacing.md,
         vertical: dense ? 4 : 6,
       ),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: AppRadius.allRound,
-      ),
+      decoration: BoxDecoration(color: bg, borderRadius: AppRadius.allRound),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -79,8 +76,11 @@ class RewardBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.local_fire_department_rounded,
-              size: 14, color: Colors.white),
+          const Icon(
+            Icons.local_fire_department_rounded,
+            size: 14,
+            color: Colors.white,
+          ),
           const SizedBox(width: 4),
           Text(
             'NT\$ $amount',

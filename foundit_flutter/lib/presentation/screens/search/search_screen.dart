@@ -88,12 +88,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   ItemFilter get _filter => ItemFilter(
-        keyword:
-            _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
-        type: _filterType,
-        category: _filterCategory,
-        pageSize: 50,
-      );
+    keyword: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+    type: _filterType,
+    category: _filterCategory,
+    pageSize: 50,
+  );
 
   bool get _showSuggestions =>
       !_searched && _searchCtrl.text.trim().isEmpty && _filterCategory == null;
@@ -124,8 +123,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 filterType: _filterType,
                 filterCategory: _filterCategory,
                 onTypeChange: (t) => setState(() => _filterType = t),
-                onCategoryChange: (c) =>
-                    setState(() => _filterCategory = c),
+                onCategoryChange: (c) => setState(() => _filterCategory = c),
               ),
             Expanded(
               child: AnimatedSwitcher(
@@ -185,11 +183,16 @@ class _ResultsView extends ConsumerWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.cloud_off_rounded,
-                  size: 48, color: AppColors.textTertiary),
+              const Icon(
+                Icons.cloud_off_rounded,
+                size: 48,
+                color: AppColors.textTertiary,
+              ),
               const SizedBox(height: 12),
-              const Text('搜尋失敗，請檢查網路連線',
-                  style: TextStyle(color: AppColors.textSecondary)),
+              const Text(
+                '搜尋失敗，請檢查網路連線',
+                style: TextStyle(color: AppColors.textSecondary),
+              ),
               const SizedBox(height: 12),
               TextButton(
                 onPressed: () => ref.invalidate(itemsProvider(filter)),
@@ -222,8 +225,10 @@ class _ResultsView extends ConsumerWidget {
                 child: FadeInAnimation(
                   child: ListItemCard(
                     item: results[i],
-                    onTap: () => context.push('/item/${results[i].id}',
-                        extra: results[i]),
+                    onTap: () => context.push(
+                      '/item/${results[i].id}',
+                      extra: results[i],
+                    ),
                   ),
                 ),
               ),
@@ -276,8 +281,10 @@ class _SearchHeader extends StatelessWidget {
                 decoration: InputDecoration(
                   filled: false,
                   border: InputBorder.none,
-                  prefixIcon: const Icon(Icons.search_rounded,
-                      color: AppColors.textTertiary),
+                  prefixIcon: const Icon(
+                    Icons.search_rounded,
+                    color: AppColors.textTertiary,
+                  ),
                   suffixIcon: controller.text.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.close_rounded, size: 18),
@@ -331,20 +338,24 @@ class _SuggestionsView extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 minimumSize: Size.zero,
               ),
-              child: const Text('清除全部',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textTertiary,
-                    fontWeight: FontWeight.w600,
-                  )),
+              child: const Text(
+                '清除全部',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textTertiary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 4),
-          ...recent.map((q) => _RecentTile(
-                text: q,
-                onTap: () => onTap(q),
-                onRemove: () => onRemove(q),
-              )),
+          ...recent.map(
+            (q) => _RecentTile(
+              text: q,
+              onTap: () => onTap(q),
+              onRemove: () => onRemove(q),
+            ),
+          ),
           const SizedBox(height: 20),
         ],
         const _SectionTitle(title: '熱門搜尋'),
@@ -427,8 +438,11 @@ class _RecentTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
           child: Row(
             children: [
-              const Icon(Icons.history_rounded,
-                  size: 18, color: AppColors.textTertiary),
+              const Icon(
+                Icons.history_rounded,
+                size: 18,
+                color: AppColors.textTertiary,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -441,15 +455,21 @@ class _RecentTile extends StatelessWidget {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.close_rounded,
-                    size: 16, color: AppColors.textTertiary),
+                icon: const Icon(
+                  Icons.close_rounded,
+                  size: 16,
+                  color: AppColors.textTertiary,
+                ),
                 constraints: const BoxConstraints(),
                 padding: EdgeInsets.zero,
                 onPressed: onRemove,
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.north_west_rounded,
-                  size: 16, color: AppColors.textTertiary),
+              const Icon(
+                Icons.north_west_rounded,
+                size: 16,
+                color: AppColors.textTertiary,
+              ),
             ],
           ),
         ),
@@ -489,8 +509,7 @@ class _HotChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
                   color: rankColor,
                   borderRadius: AppRadius.allXs,
@@ -498,7 +517,7 @@ class _HotChip extends StatelessWidget {
                 child: Text(
                   '$rank',
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: AppColors.onPrimary,
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                   ),
@@ -608,7 +627,8 @@ class _FilterRow extends StatelessWidget {
             selected: filterType == ItemType.lost,
             color: AppColors.lost,
             onTap: () => onTypeChange(
-                filterType == ItemType.lost ? null : ItemType.lost),
+              filterType == ItemType.lost ? null : ItemType.lost,
+            ),
           ),
           const SizedBox(width: 8),
           _Chip(
@@ -616,20 +636,23 @@ class _FilterRow extends StatelessWidget {
             selected: filterType == ItemType.found,
             color: AppColors.found,
             onTap: () => onTypeChange(
-                filterType == ItemType.found ? null : ItemType.found),
+              filterType == ItemType.found ? null : ItemType.found,
+            ),
           ),
           const SizedBox(width: 16),
           Container(width: 1, height: 20, color: AppColors.divider),
           const SizedBox(width: 16),
-          ...AppConstants.itemCategories.map((c) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: _Chip(
-                  label: '${c.emoji} ${c.name}',
-                  selected: filterCategory == c.name,
-                  onTap: () => onCategoryChange(
-                      filterCategory == c.name ? null : c.name),
-                ),
-              )),
+          ...AppConstants.itemCategories.map(
+            (c) => Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _Chip(
+                label: '${c.emoji} ${c.name}',
+                selected: filterCategory == c.name,
+                onTap: () =>
+                    onCategoryChange(filterCategory == c.name ? null : c.name),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -666,7 +689,7 @@ class _Chip extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: selected ? Colors.white : AppColors.textSecondary,
+              color: selected ? AppColors.onPrimary : AppColors.textSecondary,
               fontSize: 13,
               fontWeight: FontWeight.w600,
             ),

@@ -215,7 +215,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             hintText: '0912 345 678',
             errorMaxLines: 3,
             filled: true,
-            fillColor: Colors.white,
+            fillColor: AppColors.surface,
             prefixIcon: const Icon(
               Icons.phone_iphone_rounded,
               color: AppColors.primary,
@@ -260,7 +260,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   height: 20,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: AppColors.onPrimary,
                   ),
                 )
               : Text(mock ? '體驗手機驗證' : '取得驗證碼'),
@@ -282,7 +282,7 @@ class _HeroPhotos extends StatelessWidget {
         width: 108,
         height: 132,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
           boxShadow: const [
             BoxShadow(

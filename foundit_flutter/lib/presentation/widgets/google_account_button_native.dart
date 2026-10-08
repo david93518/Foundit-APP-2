@@ -4,11 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/services/google_identity_service.dart';
 
 class GoogleAccountButton extends ConsumerStatefulWidget {
-  const GoogleAccountButton({super.key, required this.onToken, required this.onError});
+  const GoogleAccountButton({
+    super.key,
+    required this.onToken,
+    required this.onError,
+  });
   final Future<void> Function(String token) onToken;
   final void Function(String message) onError;
   @override
-  ConsumerState<GoogleAccountButton> createState() => _GoogleAccountButtonState();
+  ConsumerState<GoogleAccountButton> createState() =>
+      _GoogleAccountButtonState();
 }
 
 class _GoogleAccountButtonState extends ConsumerState<GoogleAccountButton> {
@@ -37,7 +42,11 @@ class _GoogleAccountButtonState extends ConsumerState<GoogleAccountButton> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
     icon: _busy
-        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+        ? const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
         : Image.asset('assets/icons/google_g.png', width: 20, height: 20),
     label: const Text('使用 Google 帳號繼續'),
   );

@@ -440,7 +440,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                                 onPressed: _saving || _picking ? null : _save,
                                 style: FilledButton.styleFrom(
                                   backgroundColor: AppColors.primary,
-                                  foregroundColor: Colors.white,
+                                  foregroundColor: AppColors.onPrimary,
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 18,
                                     vertical: 16,

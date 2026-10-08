@@ -84,11 +84,14 @@ class _AiMatchScreenState extends ConsumerState<AiMatchScreen>
     try {
       String? remoteImageUrl;
       if (_localFile != null) {
-        remoteImageUrl =
-            await ref.read(uploadRepositoryProvider).uploadImage(_localFile!);
+        remoteImageUrl = await ref
+            .read(uploadRepositoryProvider)
+            .uploadImage(_localFile!);
       }
       final keyword = _keywordCtrl.text.trim();
-      final results = await ref.read(aiRepositoryProvider).match(
+      final results = await ref
+          .read(aiRepositoryProvider)
+          .match(
             keyword: keyword.isEmpty ? null : keyword,
             imageUrl: remoteImageUrl,
           );
@@ -136,12 +139,12 @@ class _AiMatchScreenState extends ConsumerState<AiMatchScreen>
                       onSearch: _searchByKeyword,
                     )
                   : _analyzing
-                      ? _Analyzing(url: _photoUrl, ctrl: _scanCtrl)
-                      : _Results(
-                          url: _photoUrl,
-                          results: _results,
-                          errorMessage: _errorMessage,
-                        ),
+                  ? _Analyzing(url: _photoUrl, ctrl: _scanCtrl)
+                  : _Results(
+                      url: _photoUrl,
+                      results: _results,
+                      errorMessage: _errorMessage,
+                    ),
             ),
             if (_photoUrl != null || _results.isNotEmpty)
               Padding(
@@ -182,12 +185,17 @@ class _Header extends StatelessWidget {
                     gradient: AppColors.primaryGradient,
                     borderRadius: AppRadius.allSm,
                   ),
-                  child: const Icon(Icons.auto_awesome_rounded,
-                      color: Colors.white, size: 16),
+                  child: const Icon(
+                    Icons.auto_awesome_rounded,
+                    color: Colors.white,
+                    size: 16,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                Text('AI 智慧配對',
-                    style: Theme.of(context).textTheme.headlineMedium),
+                Text(
+                  'AI 智慧配對',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
               ],
             ),
           ),
@@ -215,10 +223,7 @@ class _PickPhoto extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 4),
-          Text(
-            '上傳照片或輸入關鍵字',
-            style: Theme.of(context).textTheme.displaySmall,
-          ),
+          Text('上傳照片或輸入關鍵字', style: Theme.of(context).textTheme.displaySmall),
           const SizedBox(height: 8),
           const Text(
             '我們會比對全站物品，找出最相似的候選清單。',
@@ -244,10 +249,7 @@ class _PickPhoto extends StatelessWidget {
                   ],
                 ),
                 borderRadius: AppRadius.allLg,
-                border: Border.all(
-                  color: AppColors.primary300,
-                  width: 1.5,
-                ),
+                border: Border.all(color: AppColors.primary300, width: 1.5),
               ),
               child: Center(
                 child: Column(
@@ -349,8 +351,10 @@ class _OrDivider extends StatelessWidget {
         Expanded(child: Divider()),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 8),
-          child: Text('或',
-              style: TextStyle(color: AppColors.textTertiary, fontSize: 12)),
+          child: Text(
+            '或',
+            style: TextStyle(color: AppColors.textTertiary, fontSize: 12),
+          ),
         ),
         Expanded(child: Divider()),
       ],
@@ -517,11 +521,7 @@ class _Analyzing extends StatelessWidget {
 }
 
 class _Results extends StatelessWidget {
-  const _Results({
-    required this.url,
-    required this.results,
-    this.errorMessage,
-  });
+  const _Results({required this.url, required this.results, this.errorMessage});
   final String? url;
   final List<AiMatchResult> results;
   final String? errorMessage;
@@ -535,11 +535,16 @@ class _Results extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline_rounded,
-                  size: 48, color: AppColors.error),
+              const Icon(
+                Icons.error_outline_rounded,
+                size: 48,
+                color: AppColors.error,
+              ),
               const SizedBox(height: 12),
-              const Text('找不到相符結果',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
+              const Text(
+                '找不到相符結果',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
               const SizedBox(height: 4),
               Text(
                 errorMessage!,
@@ -564,10 +569,7 @@ class _Results extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [
-                  AppColors.found50,
-                  AppColors.primary50,
-                ],
+                colors: [AppColors.found50, AppColors.primary50],
               ),
               borderRadius: AppRadius.allLg,
             ),
@@ -586,8 +588,11 @@ class _Results extends StatelessWidget {
                       color: AppColors.primary100,
                       borderRadius: AppRadius.allSm,
                     ),
-                    child: const Icon(Icons.search_rounded,
-                        color: AppColors.primary, size: 28),
+                    child: const Icon(
+                      Icons.search_rounded,
+                      color: AppColors.primary,
+                      size: 28,
+                    ),
                   ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -596,8 +601,11 @@ class _Results extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.check_circle_rounded,
-                              color: AppColors.found, size: 18),
+                          const Icon(
+                            Icons.check_circle_rounded,
+                            color: AppColors.found,
+                            size: 18,
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             '分析完成',
@@ -633,12 +641,13 @@ class _Results extends StatelessWidget {
           else ...[
             Row(
               children: [
-                Text('配對結果',
-                    style: Theme.of(context).textTheme.headlineMedium),
+                Text('配對結果', style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
                     borderRadius: AppRadius.allRound,
@@ -655,10 +664,12 @@ class _Results extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            ...results.map((r) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _ResultRow(result: r),
-                )),
+            ...results.map(
+              (r) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _ResultRow(result: r),
+              ),
+            ),
           ],
         ],
       ),
@@ -681,8 +692,7 @@ class _PreviewImage extends StatelessWidget {
         width: width ?? double.infinity,
         height: height,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) =>
-            Container(color: AppColors.primary100),
+        errorBuilder: (_, __, ___) => Container(color: AppColors.primary100),
       );
     }
     return Image.network(
@@ -690,8 +700,7 @@ class _PreviewImage extends StatelessWidget {
       width: width ?? double.infinity,
       height: height,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) =>
-          Container(color: AppColors.primary100),
+      errorBuilder: (_, __, ___) => Container(color: AppColors.primary100),
     );
   }
 }
@@ -706,8 +715,8 @@ class _ResultRow extends StatelessWidget {
     final color = score > 80
         ? AppColors.found
         : score > 60
-            ? AppColors.reward
-            : AppColors.textTertiary;
+        ? AppColors.reward
+        : AppColors.textTertiary;
 
     return Stack(
       children: [
@@ -720,13 +729,11 @@ class _ResultRow extends StatelessWidget {
           right: 18,
           top: 22,
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [
-                color,
-                color.withValues(alpha: 0.8),
-              ]),
+              gradient: LinearGradient(
+                colors: [color, color.withValues(alpha: 0.8)],
+              ),
               borderRadius: AppRadius.allRound,
               boxShadow: [
                 BoxShadow(
@@ -739,8 +746,11 @@ class _ResultRow extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.percent_rounded,
-                    color: Colors.white, size: 12),
+                const Icon(
+                  Icons.percent_rounded,
+                  color: Colors.white,
+                  size: 12,
+                ),
                 const SizedBox(width: 2),
                 Text(
                   '$score',

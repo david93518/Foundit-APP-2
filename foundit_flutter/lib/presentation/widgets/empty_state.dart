@@ -57,10 +57,7 @@ class EmptyState extends StatelessWidget {
               const SizedBox(height: 24),
               SizedBox(
                 width: 180,
-                child: GradientButton(
-                  label: ctaLabel!,
-                  onPressed: onCta!,
-                ),
+                child: GradientButton(label: ctaLabel!, onPressed: onCta!),
               ),
             ],
           ],

@@ -146,11 +146,13 @@ class StatusTag extends StatelessWidget {
   Widget build(BuildContext context) {
     final resolved = item.status == ItemStatus.resolved;
     final found = item.type == ItemType.found;
-    final fg = resolved
+    final base = resolved
         ? AppColors.textSecondary
         : found
         ? AppColors.primary700
         : AppColors.ink;
+    // 疊在照片上時永遠用亮色模式的值：照片不會跟著變暗。
+    final fg = onPhoto ? base.light : base;
     final bg = onPhoto
         ? Colors.white.withValues(alpha: .94)
         : resolved
@@ -337,7 +339,9 @@ class _FoundItemCardState extends ConsumerState<FoundItemCard> {
                       ? Icons.bookmark_rounded
                       : Icons.bookmark_border_rounded,
                   size: 18,
-                  color: saved ? AppColors.primary : AppColors.textPrimary,
+                  color: saved
+                      ? AppColors.primary.light
+                      : AppColors.textPrimary.light,
                 ),
               ),
             ),

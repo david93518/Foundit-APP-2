@@ -43,14 +43,12 @@ class CategoryPill extends StatelessWidget {
                     borderRadius: AppRadius.allLg,
                     boxShadow: selected ? AppShadows.primary : AppShadows.xs,
                     border: Border.all(
-                      color:
-                          selected ? Colors.transparent : AppColors.divider,
+                      color: selected ? Colors.transparent : AppColors.divider,
                       width: 1,
                     ),
                   ),
                   alignment: Alignment.center,
-                  child:
-                      Text(meta.emoji, style: const TextStyle(fontSize: 30)),
+                  child: Text(meta.emoji, style: const TextStyle(fontSize: 30)),
                 ),
                 if (count > 0)
                   Positioned(

@@ -6,12 +6,7 @@ import '../../core/theme/app_spacing.dart';
 
 /// 通用 Skeleton 區塊（已內建 shimmer）
 class SkeletonBox extends StatelessWidget {
-  const SkeletonBox({
-    super.key,
-    this.width,
-    this.height = 14,
-    this.radius,
-  });
+  const SkeletonBox({super.key, this.width, this.height = 14, this.radius});
 
   final double? width;
   final double height;
@@ -53,7 +48,10 @@ class ItemCardSkeleton extends StatelessWidget {
         child: Row(
           children: [
             const SkeletonBox(
-                width: 96, height: 96, radius: BorderRadius.all(Radius.circular(14))),
+              width: 96,
+              height: 96,
+              radius: BorderRadius.all(Radius.circular(14)),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

@@ -11,11 +11,12 @@ final itemFilterProvider = StateProvider<ItemFilter>((ref) {
 });
 
 /// 首頁 / 搜尋用的物品清單（async family 依賴 filter）
-final itemsProvider =
-    FutureProvider.autoDispose.family<List<Item>, ItemFilter>((ref, filter) {
-  final repo = ref.watch(itemRepositoryProvider);
-  return repo.list(filter);
-});
+final itemsProvider = FutureProvider.autoDispose.family<List<Item>, ItemFilter>(
+  (ref, filter) {
+    final repo = ref.watch(itemRepositoryProvider);
+    return repo.list(filter);
+  },
+);
 
 /// A home feed assembled from the existing page cache, so item invalidation
 /// after publishing/resolving also refreshes every displayed page.
@@ -37,62 +38,62 @@ class HomeItemPages {
 
 final homeItemPagesProvider = Provider.autoDispose
     .family<HomeItemPages, ({ItemFilter filter, int pages})>((ref, request) {
-  final merged = <String, Item>{};
-  for (var number = 1; number <= request.pages; number++) {
-    final page = ref.watch(
-      itemsProvider(
-        request.filter.copyWith(
-          page: number,
-          pageSize: HomeItemPages.pageSize,
-        ),
-      ),
-    );
-    if (page.isLoading || page.hasError) {
+      final merged = <String, Item>{};
+      for (var number = 1; number <= request.pages; number++) {
+        final page = ref.watch(
+          itemsProvider(
+            request.filter.copyWith(
+              page: number,
+              pageSize: HomeItemPages.pageSize,
+            ),
+          ),
+        );
+        if (page.isLoading || page.hasError) {
+          return HomeItemPages(
+            items: List.unmodifiable(merged.values),
+            loadedPages: number - 1,
+            hasMore: true,
+            loading: page.isLoading,
+            error: page.hasError ? page.error : null,
+          );
+        }
+        final rows = page.requireValue;
+        for (final item in rows) {
+          merged[item.id] = item;
+        }
+        if (rows.length < HomeItemPages.pageSize) {
+          return HomeItemPages(
+            items: List.unmodifiable(merged.values),
+            loadedPages: number,
+            hasMore: false,
+          );
+        }
+      }
       return HomeItemPages(
         items: List.unmodifiable(merged.values),
-        loadedPages: number - 1,
+        loadedPages: request.pages,
         hasMore: true,
-        loading: page.isLoading,
-        error: page.hasError ? page.error : null,
       );
-    }
-    final rows = page.requireValue;
-    for (final item in rows) {
-      merged[item.id] = item;
-    }
-    if (rows.length < HomeItemPages.pageSize) {
-      return HomeItemPages(
-        items: List.unmodifiable(merged.values),
-        loadedPages: number,
-        hasMore: false,
-      );
-    }
-  }
-  return HomeItemPages(
-    items: List.unmodifiable(merged.values),
-    loadedPages: request.pages,
-    hasMore: true,
-  );
-});
+    });
 
 /// 地圖用：後端單頁上限 50 筆，所以逐頁抓到底（最多 [mapMaxPages] 頁）。
 const mapPageSize = 50;
 const mapMaxPages = 6;
-final mapItemsProvider =
-    FutureProvider.autoDispose.family<List<Item>, ItemType?>((ref, type) async {
-  final repo = ref.watch(itemRepositoryProvider);
-  final merged = <String, Item>{};
-  for (var page = 1; page <= mapMaxPages; page++) {
-    final rows = await repo.list(
-      ItemFilter(type: type, page: page, pageSize: mapPageSize),
-    );
-    for (final item in rows) {
-      merged[item.id] = item;
-    }
-    if (rows.length < mapPageSize) break;
-  }
-  return List.unmodifiable(merged.values);
-});
+final mapItemsProvider = FutureProvider.autoDispose
+    .family<List<Item>, ItemType?>((ref, type) async {
+      final repo = ref.watch(itemRepositoryProvider);
+      final merged = <String, Item>{};
+      for (var page = 1; page <= mapMaxPages; page++) {
+        final rows = await repo.list(
+          ItemFilter(type: type, page: page, pageSize: mapPageSize),
+        );
+        for (final item in rows) {
+          merged[item.id] = item;
+        }
+        if (rows.length < mapPageSize) break;
+      }
+      return List.unmodifiable(merged.values);
+    });
 
 /// 便捷：目前篩選結果
 final currentItemsProvider = FutureProvider.autoDispose<List<Item>>((ref) {
@@ -101,8 +102,9 @@ final currentItemsProvider = FutureProvider.autoDispose<List<Item>>((ref) {
 });
 
 /// 「精選」物品（前 5 筆有懸賞的）
-final featuredItemsProvider =
-    FutureProvider.autoDispose<List<Item>>((ref) async {
+final featuredItemsProvider = FutureProvider.autoDispose<List<Item>>((
+  ref,
+) async {
   final list = await ref.watch(
     itemsProvider(const ItemFilter(hasReward: true, pageSize: 5)).future,
   );
@@ -115,8 +117,10 @@ final itemStatsProvider = FutureProvider.autoDispose<ItemStats>((ref) {
 });
 
 /// 單一物品詳情
-final itemDetailProvider =
-    FutureProvider.autoDispose.family<Item?, String>((ref, id) {
+final itemDetailProvider = FutureProvider.autoDispose.family<Item?, String>((
+  ref,
+  id,
+) {
   return ref.watch(itemRepositoryProvider).detail(id);
 });
 
@@ -142,5 +146,5 @@ class CreateItemNotifier extends StateNotifier<AsyncValue<Item?>> {
 
 final createItemProvider =
     StateNotifierProvider<CreateItemNotifier, AsyncValue<Item?>>((ref) {
-  return CreateItemNotifier(ref.watch(itemRepositoryProvider));
-});
+      return CreateItemNotifier(ref.watch(itemRepositoryProvider));
+    });

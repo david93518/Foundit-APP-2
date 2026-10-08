@@ -180,7 +180,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         data: Theme.of(context).copyWith(
           colorScheme: Theme.of(context).colorScheme.copyWith(
             primary: AppColors.primary,
-            onPrimary: Colors.white,
+            onPrimary: AppColors.onPrimary,
             surface: AppColors.surface,
           ),
         ),
@@ -433,7 +433,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           onPressed: _busy || _picking ? null : _next,
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.primary,
-            foregroundColor: Colors.white,
+            foregroundColor: AppColors.onPrimary,
             minimumSize: const Size(0, 52),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             shape: RoundedRectangleBorder(
@@ -449,7 +449,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: AppColors.onPrimary,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -510,7 +510,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 6, 20, 14),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.divider)),
       ),
       child: Column(
@@ -719,11 +719,14 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
     final selected = _type == type;
     // 遺失＝炭墨、撿到＝陶土，與首頁入口及狀態標籤同一套顏色。
     final accent = type == ItemType.lost ? AppColors.ink : AppColors.primary;
+    final onAccent = type == ItemType.lost
+        ? AppColors.onInk
+        : AppColors.onPrimary;
     return Semantics(
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? accent : Colors.white,
+        color: selected ? accent : AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: () => setState(() => _type = type),
@@ -739,7 +742,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
               children: [
                 Icon(
                   icon,
-                  color: selected ? Colors.white : AppColors.textSecondary,
+                  color: selected ? onAccent : AppColors.textSecondary,
                   size: 21,
                 ),
                 const SizedBox(height: 8),
@@ -747,7 +750,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
                   label,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: selected ? Colors.white : AppColors.textPrimary,
+                    color: selected ? onAccent : AppColors.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -866,7 +869,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.ink,
+                        color: Color(0xFF282B30), // 疊在照片上，固定亮色模式的炭墨
                       ),
                     ),
                   ),
@@ -879,7 +882,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
                   onPressed: () => setState(() => _photos.remove(photo)),
                   style: IconButton.styleFrom(
                     backgroundColor: AppColors.ink.withValues(alpha: 0.78),
-                    foregroundColor: Colors.white,
+                    foregroundColor: AppColors.onInk,
                     minimumSize: const Size(44, 44),
                   ),
                   icon: const Icon(Icons.close_rounded, size: 18),
@@ -980,7 +983,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         const SizedBox(height: 28),
         _FieldLabel(_isFound ? '拾獲日期' : '遺失日期'),
         Material(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(14),
           child: InkWell(
             onTap: _pickDate,
@@ -1060,7 +1063,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? AppColors.primary50 : Colors.white,
+        color: selected ? AppColors.primary50 : AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: () => setState(() => _custody = option),
@@ -1110,7 +1113,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         width: double.infinity,
         padding: const EdgeInsets.all(22),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           border: Border.all(color: AppColors.divider),
           borderRadius: BorderRadius.circular(14),
         ),
@@ -1283,7 +1286,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
       height: 1.6,
     ),
     filled: true,
-    fillColor: Colors.white,
+    fillColor: AppColors.surface,
     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
@@ -1388,7 +1391,7 @@ class _Choice extends StatelessWidget {
     selected: selected,
     button: true,
     child: Material(
-      color: selected ? AppColors.primary50 : Colors.white,
+      color: selected ? AppColors.primary50 : AppColors.surface,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,

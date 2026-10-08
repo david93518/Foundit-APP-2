@@ -155,8 +155,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 AnimatedSwitcher(
-                                  duration:
-                                      const Duration(milliseconds: 220),
+                                  duration: const Duration(milliseconds: 220),
                                   transitionBuilder: (c, a) =>
                                       FadeTransition(opacity: a, child: c),
                                   child: Text(
@@ -171,8 +170,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 AnimatedSwitcher(
-                                  duration:
-                                      const Duration(milliseconds: 220),
+                                  duration: const Duration(milliseconds: 220),
                                   child: Icon(
                                     _isLast
                                         ? Icons.check_rounded
@@ -243,8 +241,9 @@ class _OnboardPageViewState extends State<_OnboardPageView>
                       height: 240 + _pulse.value * 30,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.white
-                            .withValues(alpha: 0.12 - _pulse.value * 0.08),
+                        color: Colors.white.withValues(
+                          alpha: 0.12 - _pulse.value * 0.08,
+                        ),
                       ),
                     ),
                   ),
@@ -271,8 +270,10 @@ class _OnboardPageViewState extends State<_OnboardPageView>
                       ],
                     ),
                     alignment: Alignment.center,
-                    child: Text(widget.page.emoji,
-                        style: const TextStyle(fontSize: 76)),
+                    child: Text(
+                      widget.page.emoji,
+                      style: const TextStyle(fontSize: 76),
+                    ),
                   ),
                   Positioned(
                     top: 40,

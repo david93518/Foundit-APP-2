@@ -10,10 +10,10 @@ final chatsProvider = FutureProvider.autoDispose<List<Chat>>((ref) async {
 });
 
 /// 某聊天室的歷史訊息
-final chatMessagesProvider =
-    FutureProvider.autoDispose.family<List<Message>, String>((ref, chatId) {
-  return ref.watch(chatRepositoryProvider).messages(chatId);
-});
+final chatMessagesProvider = FutureProvider.autoDispose
+    .family<List<Message>, String>((ref, chatId) {
+      return ref.watch(chatRepositoryProvider).messages(chatId);
+    });
 
 /// 我所有對話的累積未讀數 — 給底部 nav 訊息 tab 的 badge 使用
 final chatUnreadTotalProvider = FutureProvider.autoDispose<int>((ref) {
@@ -52,5 +52,5 @@ class ChatActionsNotifier extends StateNotifier<AsyncValue<void>> {
 
 final chatActionsProvider =
     StateNotifierProvider<ChatActionsNotifier, AsyncValue<void>>((ref) {
-  return ChatActionsNotifier(ref.watch(chatRepositoryProvider));
-});
+      return ChatActionsNotifier(ref.watch(chatRepositoryProvider));
+    });

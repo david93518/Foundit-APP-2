@@ -146,7 +146,7 @@ class ProfileScreen extends ConsumerWidget {
                                   onPressed: () => context.push('/login'),
                                   style: FilledButton.styleFrom(
                                     backgroundColor: AppColors.primary,
-                                    foregroundColor: Colors.white,
+                                    foregroundColor: AppColors.onPrimary,
                                     minimumSize: const Size.fromHeight(48),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),

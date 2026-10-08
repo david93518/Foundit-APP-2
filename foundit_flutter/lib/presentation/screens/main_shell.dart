@@ -57,6 +57,7 @@ class MainShell extends ConsumerWidget {
                   '提供特徵，讓大家幫忙尋找',
                   Icons.search_rounded,
                   AppColors.ink,
+                  AppColors.onInk,
                 ),
                 (
                   'found',
@@ -64,6 +65,7 @@ class MainShell extends ConsumerWidget {
                   '登記拾獲資訊，讓失主找到你',
                   Icons.inventory_2_outlined,
                   AppColors.primary,
+                  AppColors.onPrimary,
                 ),
               ])
                 Padding(
@@ -92,11 +94,7 @@ class MainShell extends ConsumerWidget {
                               color: choice.$5,
                               borderRadius: BorderRadius.circular(13),
                             ),
-                            child: Icon(
-                              choice.$4,
-                              color: Colors.white,
-                              size: 22,
-                            ),
+                            child: Icon(choice.$4, color: choice.$6, size: 22),
                           ),
                           const SizedBox(width: 14),
                           Expanded(
@@ -288,7 +286,7 @@ class MainShell extends ConsumerWidget {
             label: const Text('刊登物品'),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              foregroundColor: AppColors.onPrimary,
               minimumSize: const Size.fromHeight(46),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -400,7 +398,7 @@ class MainShell extends ConsumerWidget {
                             ),
                             child: const Icon(
                               Icons.add_rounded,
-                              color: Colors.white,
+                              color: AppColors.onPrimary,
                               size: 28,
                             ),
                           ),

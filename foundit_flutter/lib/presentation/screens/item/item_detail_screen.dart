@@ -336,7 +336,9 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               icon: saved
                   ? Icons.bookmark_rounded
                   : Icons.bookmark_border_rounded,
-              color: saved ? AppColors.primary : AppColors.textPrimary,
+              color: saved
+                  ? AppColors.primary.light
+                  : AppColors.textPrimary.light,
               onTap: () =>
                   ref.read(savedItemsProvider.notifier).toggle(item.id),
             ),
@@ -657,7 +659,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
         : _contact,
     style: FilledButton.styleFrom(
       backgroundColor: AppColors.primary,
-      foregroundColor: Colors.white,
+      foregroundColor: AppColors.onPrimary,
       minimumSize: const Size.fromHeight(54),
       textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -668,7 +670,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
             height: 18,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: Colors.white,
+              color: AppColors.onPrimary,
             ),
           )
         : Icon(
@@ -760,7 +762,7 @@ class _Gallery extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
               decoration: BoxDecoration(
-                color: AppColors.ink.withValues(alpha: .62),
+                color: AppColors.ink.light.withValues(alpha: .62),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
@@ -832,7 +834,8 @@ class _RoundButton extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onTap,
-    this.color = AppColors.textPrimary,
+    // 浮在照片上，永遠用亮色模式的炭墨。
+    this.color = const Color(0xFF282B30),
   });
   final String tooltip;
   final IconData icon;

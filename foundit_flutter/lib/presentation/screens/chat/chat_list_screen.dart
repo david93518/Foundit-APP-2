@@ -229,7 +229,7 @@ class _FilterButton extends StatelessWidget {
           style: TextStyle(
             fontSize: 13,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: selected ? Colors.white : AppColors.textPrimary,
+            color: selected ? AppColors.onInk : AppColors.textPrimary,
           ),
         ),
       ),
@@ -365,7 +365,7 @@ class _ChatRow extends StatelessWidget {
                                 ? '99+'
                                 : '${chat.unreadCount}',
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: AppColors.onPrimary,
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),

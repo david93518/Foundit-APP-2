@@ -8,11 +8,16 @@ import 'package:google_sign_in_web/web_only.dart' as google_web;
 import '../../core/services/google_identity_service.dart';
 
 class GoogleAccountButton extends ConsumerStatefulWidget {
-  const GoogleAccountButton({super.key, required this.onToken, required this.onError});
+  const GoogleAccountButton({
+    super.key,
+    required this.onToken,
+    required this.onError,
+  });
   final Future<void> Function(String token) onToken;
   final void Function(String message) onError;
   @override
-  ConsumerState<GoogleAccountButton> createState() => _GoogleAccountButtonState();
+  ConsumerState<GoogleAccountButton> createState() =>
+      _GoogleAccountButtonState();
 }
 
 class _GoogleAccountButtonState extends ConsumerState<GoogleAccountButton> {
@@ -30,7 +35,9 @@ class _GoogleAccountButtonState extends ConsumerState<GoogleAccountButton> {
     try {
       await service.client.signOut();
       if (!mounted) return;
-      _subscription = service.client.onCurrentUserChanged.listen((account) async {
+      _subscription = service.client.onCurrentUserChanged.listen((
+        account,
+      ) async {
         if (account == null || _busy) return;
         setState(() => _busy = true);
         try {
@@ -57,8 +64,12 @@ class _GoogleAccountButtonState extends ConsumerState<GoogleAccountButton> {
   @override
   Widget build(BuildContext context) => !_ready || _busy
       ? const Center(child: CircularProgressIndicator())
-      : Center(child: google_web.renderButton(configuration: google_web.GSIButtonConfiguration(
-          text: google_web.GSIButtonText.continueWith,
-          size: google_web.GSIButtonSize.large,
-        )));
+      : Center(
+          child: google_web.renderButton(
+            configuration: google_web.GSIButtonConfiguration(
+              text: google_web.GSIButtonText.continueWith,
+              size: google_web.GSIButtonSize.large,
+            ),
+          ),
+        );
 }

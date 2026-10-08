@@ -225,7 +225,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                         ),
                         hintText: '000000',
                         filled: true,
-                        fillColor: Colors.white,
+                        fillColor: AppColors.surface,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: const BorderSide(
@@ -284,7 +284,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                               height: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
                               ),
                             )
                           : Text(mock ? '完成體驗登入' : '確認並繼續'),

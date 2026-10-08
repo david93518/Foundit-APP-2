@@ -711,7 +711,7 @@ class _Bubble extends StatelessWidget {
                     child: Text(
                       msg.content,
                       style: TextStyle(
-                        color: isMine ? Colors.white : AppColors.textPrimary,
+                        color: isMine ? AppColors.onInk : AppColors.textPrimary,
                         fontSize: 14.5,
                         height: 1.5,
                       ),
@@ -1010,12 +1010,12 @@ class _SendBtn extends StatelessWidget {
                   padding: EdgeInsets.all(12),
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: AppColors.onInk,
                   ),
                 )
               : Icon(
                   Icons.send_rounded,
-                  color: enabled ? Colors.white : AppColors.textTertiary,
+                  color: enabled ? AppColors.onInk : AppColors.textTertiary,
                   size: 20,
                 ),
         ),

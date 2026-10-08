@@ -76,7 +76,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       constraints: const BoxConstraints(maxWidth: 560),
       builder: (c) => SafeArea(
         child: SingleChildScrollView(
@@ -264,6 +264,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             hint: '讓附近的人幫你留意',
             icon: Icons.search_rounded,
             color: AppColors.ink,
+            onColor: AppColors.onInk,
             onTap: () => context.push('/add/lost'),
           ),
         ),
@@ -274,6 +275,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             hint: '讓失主可以找到你',
             icon: Icons.inventory_2_outlined,
             color: AppColors.primary,
+            onColor: AppColors.onPrimary,
             onTap: () => context.push('/add/found'),
           ),
         ),
@@ -344,7 +346,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onPressed: _filters,
         style: IconButton.styleFrom(
           backgroundColor: _recent ? AppColors.ink : AppColors.surface,
-          foregroundColor: _recent ? Colors.white : AppColors.textPrimary,
+          foregroundColor: _recent ? AppColors.onInk : AppColors.textPrimary,
           minimumSize: const Size(50, 50),
           side: BorderSide(color: _recent ? AppColors.ink : AppColors.divider),
           shape: RoundedRectangleBorder(
@@ -463,7 +465,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               Icon(
                 categoryIcon(category),
                 size: 16,
-                color: selected ? Colors.white : AppColors.textSecondary,
+                color: selected ? AppColors.onInk : AppColors.textSecondary,
               ),
               const SizedBox(width: 6),
               Text(
@@ -471,7 +473,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? Colors.white : AppColors.textPrimary,
+                  color: selected ? AppColors.onInk : AppColors.textPrimary,
                 ),
               ),
             ],
@@ -674,7 +676,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           value: _area ?? '全部地區',
           itemHeight: null,
           borderRadius: BorderRadius.circular(16),
-          dropdownColor: Colors.white,
+          dropdownColor: AppColors.surface,
           icon: const Icon(
             Icons.expand_more_rounded,
             size: 18,
@@ -733,12 +735,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [
           BracketMark(
             size: 46,
-            color: Colors.white.withValues(alpha: .5),
+            color: AppColors.onInk.withValues(alpha: .5),
             strokeWidth: 2.4,
             child: const Icon(
               Icons.qr_code_2_rounded,
               size: 24,
-              color: Colors.white,
+              color: AppColors.onInk,
             ),
           ),
           const SizedBox(width: 16),
@@ -751,13 +753,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
-                    color: Colors.white,
+                    color: AppColors.onInk,
                   ),
                 ),
                 SizedBox(height: 3),
                 Text(
                   '掃描 QR，讓拾獲者聯絡你',
-                  style: TextStyle(fontSize: 12, color: Color(0xB3FFFFFF)),
+                  style: TextStyle(fontSize: 12, color: AppColors.onInkMuted),
                 ),
               ],
             ),
@@ -765,7 +767,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const Icon(
             Icons.arrow_forward_rounded,
             size: 20,
-            color: Colors.white,
+            color: AppColors.onInk,
           ),
         ],
       ),
@@ -779,11 +781,15 @@ class _IntentCard extends StatelessWidget {
     required this.hint,
     required this.icon,
     required this.color,
+    required this.onColor,
     required this.onTap,
   });
   final String label, hint;
   final IconData icon;
   final Color color;
+
+  /// 放在 [color] 上的文字與圖示：炭墨用 onInk、陶土用 onPrimary。
+  final Color onColor;
   final VoidCallback onTap;
 
   @override
@@ -804,18 +810,18 @@ class _IntentCard extends StatelessWidget {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .16),
+              color: onColor.withValues(alpha: .16),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: Colors.white, size: 19),
+            child: Icon(icon, color: onColor, size: 19),
           ),
           const SizedBox(height: 14),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w800,
-              color: Colors.white,
+              color: onColor,
               letterSpacing: -.2,
             ),
           ),
@@ -823,10 +829,10 @@ class _IntentCard extends StatelessWidget {
           Text(
             hint,
             maxLines: 2,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               height: 1.4,
-              color: Color(0xC7FFFFFF),
+              color: onColor.withValues(alpha: .78),
             ),
           ),
         ],

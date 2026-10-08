@@ -6,6 +6,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
+import '../../providers/theme_provider.dart';
 import '../../widgets/google_account_button.dart';
 
 /// Only settings backed by implemented behavior are presented as controls.
@@ -189,6 +190,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _pickTheme() async {
+    final current = ref.read(themeModeProvider);
+    final picked = await showModalBottomSheet<AppThemeMode>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 560),
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                '外觀',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              ),
+            ),
+            for (final mode in AppThemeMode.values)
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                leading: Icon(switch (mode) {
+                  AppThemeMode.system => Icons.brightness_auto_outlined,
+                  AppThemeMode.light => Icons.light_mode_outlined,
+                  AppThemeMode.dark => Icons.dark_mode_outlined,
+                }),
+                title: Text(mode.label),
+                subtitle: mode == AppThemeMode.system
+                    ? const Text('依照手機設定自動切換')
+                    : null,
+                trailing: Icon(
+                  current == mode
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: AppColors.primary,
+                ),
+                onTap: () => Navigator.pop(c, mode),
+              ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+    if (picked != null && mounted) {
+      await ref.read(themeModeProvider.notifier).set(picked);
+    }
+  }
+
   void _dataInfo(bool mock) => showDialog<void>(
     context: context,
     builder: (c) => AlertDialog(
@@ -212,6 +261,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final mock = ref.watch(useMockProvider);
     final loggedIn = ref.watch(authProvider).isLoggedIn;
+    final themeMode = ref.watch(themeModeProvider);
     final recent =
         ref
             .read(sharedPreferencesProvider)
@@ -261,10 +311,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             title: '介面語言',
                             detail: '繁體中文',
                           ),
-                          const _SettingRow(
-                            icon: Icons.light_mode_outlined,
+                          _SettingRow(
+                            icon: switch (themeMode) {
+                              AppThemeMode.dark => Icons.dark_mode_outlined,
+                              AppThemeMode.light => Icons.light_mode_outlined,
+                              AppThemeMode.system =>
+                                Icons.brightness_auto_outlined,
+                            },
                             title: '外觀',
-                            detail: '淺色介面',
+                            detail: themeMode.label,
+                            onTap: _pickTheme,
                           ),
                           _SettingRow(
                             icon: Icons.history_rounded,

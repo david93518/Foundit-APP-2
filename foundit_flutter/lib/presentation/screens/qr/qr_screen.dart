@@ -66,7 +66,7 @@ class _QrScreenState extends ConsumerState<QrScreen> {
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
+              foregroundColor: AppColors.onPrimary,
             ),
             onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('移除防丟牌'),
@@ -337,11 +337,11 @@ class _QrPreview extends StatelessWidget {
                     backgroundColor: Colors.white,
                     eyeStyle: const QrEyeStyle(
                       eyeShape: QrEyeShape.square,
-                      color: AppColors.textPrimary,
+                      color: Color(0xFF282B30), // 掃描用，固定深色
                     ),
                     dataModuleStyle: const QrDataModuleStyle(
                       dataModuleShape: QrDataModuleShape.square,
-                      color: AppColors.textPrimary,
+                      color: Color(0xFF282B30), // 掃描用，固定深色
                     ),
                   ),
                 ),
@@ -573,7 +573,7 @@ class _EmptyCard extends StatelessWidget {
           onPressed: onAction,
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.primary,
-            foregroundColor: Colors.white,
+            foregroundColor: AppColors.onPrimary,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           ),
           child: Text(actionLabel),
@@ -718,7 +718,7 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
                 onPressed: _saving ? null : _submit,
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
+                  foregroundColor: AppColors.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 17),
                 ),
                 icon: _saving

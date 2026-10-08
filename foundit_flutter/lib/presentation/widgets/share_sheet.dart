@@ -29,7 +29,8 @@ class _ShareSheet extends StatelessWidget {
         label: 'LINE',
         icon: Icons.chat_rounded,
         gradient: const LinearGradient(
-            colors: [Color(0xFF00C300), Color(0xFF00B100)]),
+          colors: [Color(0xFF00C300), Color(0xFF00B100)],
+        ),
       ),
       _ShareItem(
         label: '訊息',
@@ -40,13 +41,15 @@ class _ShareSheet extends StatelessWidget {
         label: 'Email',
         icon: Icons.mail_rounded,
         gradient: const LinearGradient(
-            colors: [Color(0xFF0EA5E9), Color(0xFF0284C7)]),
+          colors: [Color(0xFF0EA5E9), Color(0xFF0284C7)],
+        ),
       ),
       _ShareItem(
         label: 'Facebook',
         icon: Icons.facebook_rounded,
         gradient: const LinearGradient(
-            colors: [Color(0xFF1877F2), Color(0xFF0C63D4)]),
+          colors: [Color(0xFF1877F2), Color(0xFF0C63D4)],
+        ),
       ),
       _ShareItem(
         label: '系統分享',
@@ -57,7 +60,8 @@ class _ShareSheet extends StatelessWidget {
         label: '複製連結',
         icon: Icons.link_rounded,
         gradient: const LinearGradient(
-            colors: [Color(0xFF64748B), Color(0xFF475569)]),
+          colors: [Color(0xFF64748B), Color(0xFF475569)],
+        ),
       ),
     ];
 
@@ -87,20 +91,21 @@ class _ShareSheet extends StatelessWidget {
             ),
             Text('分享物品', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 4),
-            Text(title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 13,
-                )),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
             const SizedBox(height: 20),
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: items.length,
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 4,
                 mainAxisSpacing: 14,
                 crossAxisSpacing: 12,

@@ -90,8 +90,7 @@ class _NavTile extends StatelessWidget {
           children: [
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 240),
-              transitionBuilder: (c, a) =>
-                  ScaleTransition(scale: a, child: c),
+              transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
               child: Icon(
                 selected ? item.activeIcon : item.icon,
                 key: ValueKey(selected),
@@ -142,8 +141,11 @@ class _CenterFab extends StatelessWidget {
                   boxShadow: AppShadows.primary,
                   border: Border.all(color: AppColors.surface, width: 4),
                 ),
-                child: const Icon(Icons.add_rounded,
-                    color: Colors.white, size: 28),
+                child: const Icon(
+                  Icons.add_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
               ),
             ),
           ),

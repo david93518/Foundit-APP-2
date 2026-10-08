@@ -12,11 +12,7 @@ import 'type_badge.dart';
 /// 大照片式精選卡片（橫向滑動用）
 /// 尺寸：240 x 320，圖片佔上方，文字資訊浮在漸層遮罩上
 class FeaturedItemCard extends StatelessWidget {
-  const FeaturedItemCard({
-    super.key,
-    required this.item,
-    required this.onTap,
-  });
+  const FeaturedItemCard({super.key, required this.item, required this.onTap});
 
   final Item item;
   final VoidCallback onTap;
@@ -37,10 +33,7 @@ class FeaturedItemCard extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Hero(
-              tag: 'item_image_${item.id}',
-              child: _buildImage(item),
-            ),
+            Hero(tag: 'item_image_${item.id}', child: _buildImage(item)),
             const DecoratedBox(
               decoration: BoxDecoration(gradient: AppColors.imageScrim),
             ),
@@ -79,12 +72,17 @@ class FeaturedItemCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      const Icon(Icons.location_on_rounded,
-                          size: 13, color: Colors.white70),
+                      const Icon(
+                        Icons.location_on_rounded,
+                        size: 13,
+                        color: Colors.white70,
+                      ),
                       const SizedBox(width: 2),
                       Expanded(
                         child: Text(
-                          item.locationName.isEmpty ? '未知地點' : item.locationName,
+                          item.locationName.isEmpty
+                              ? '未知地點'
+                              : item.locationName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -117,11 +115,7 @@ class FeaturedItemCard extends StatelessWidget {
 /// 列表卡片（首頁「最新附近」區塊、搜尋結果）
 /// 左圖右文、圓角大、柔和陰影
 class ListItemCard extends StatelessWidget {
-  const ListItemCard({
-    super.key,
-    required this.item,
-    required this.onTap,
-  });
+  const ListItemCard({super.key, required this.item, required this.onTap});
 
   final Item item;
   final VoidCallback onTap;
@@ -182,12 +176,17 @@ class ListItemCard extends StatelessWidget {
                       const Spacer(),
                       Row(
                         children: [
-                          Icon(Icons.location_on_rounded,
-                              size: 13, color: AppColors.textTertiary),
+                          Icon(
+                            Icons.location_on_rounded,
+                            size: 13,
+                            color: AppColors.textTertiary,
+                          ),
                           const SizedBox(width: 2),
                           Expanded(
                             child: Text(
-                              item.locationName.isEmpty ? '未知地點' : item.locationName,
+                              item.locationName.isEmpty
+                                  ? '未知地點'
+                                  : item.locationName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodySmall,
@@ -196,9 +195,7 @@ class ListItemCard extends StatelessWidget {
                           const SizedBox(width: 4),
                           Text(
                             DateFormatter.relative(item.lostAt),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
+                            style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(color: AppColors.textTertiary),
                           ),
                         ],

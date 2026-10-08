@@ -101,27 +101,44 @@ String? authRedirect(AuthState auth, String location) {
   return public ? '/home' : null;
 }
 
-final routerProvider = Provider<GoRouter>((ref) {
+/// 最近一次所在的位置；切換亮暗模式重建路由時從這裡接續，不會跳回首頁。
+/// （Web 以網址列的啟動路徑優先，這是 go_router 的行為；App 不受影響。）
+String? _lastLocation;
+
+/// 以亮暗模式為 key：切換時整個 Navigator 連同頁面樹重新建立，
+/// 所有 `const` 顏色與已排版的文字都會用新色票重算。
+final routerProvider = Provider.autoDispose.family<GoRouter, Brightness>((
+  ref,
+  brightness,
+) {
   final refresh = ValueNotifier<int>(0);
   ref.listen<(bool, bool)>(
     authProvider.select((state) => (state.ready, state.isLoggedIn)),
     (_, __) => refresh.value++,
   );
   final router = GoRouter(
-    initialLocation: '/splash',
+    initialLocation: _lastLocation ?? '/splash',
     refreshListenable: refresh,
     redirect: (_, state) =>
         authRedirect(ref.read(authProvider), state.matchedLocation),
-    routes: _routes,
+    routes: _buildRoutes(),
   );
+  void remember() {
+    _lastLocation = router.routerDelegate.currentConfiguration.uri.toString();
+  }
+
+  router.routerDelegate.addListener(remember);
   ref.onDispose(() {
+    router.routerDelegate.removeListener(remember);
     router.dispose();
     refresh.dispose();
   });
   return router;
 });
 
-final _routes = <RouteBase>[
+/// 每個 GoRouter 都拿到自己的 ShellRoute：ShellRoute 內建的 Navigator GlobalKey
+/// 若在兩個路由間共用，切換亮暗時舊頁面樹會被搬過去而不是重建。
+List<RouteBase> _buildRoutes() => <RouteBase>[
   GoRoute(path: '/', redirect: (_, state) => '/home'),
   GoRoute(
     path: '/splash',

@@ -118,15 +118,17 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
 
   Future<void> _fetchSuggestions(String query) async {
     try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 8),
-        headers: {
-          'User-Agent': _userAgent,
-          'Accept': 'application/json',
-          'Accept-Language': 'zh-TW,zh,en',
-        },
-      ));
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 8),
+          receiveTimeout: const Duration(seconds: 8),
+          headers: {
+            'User-Agent': _userAgent,
+            'Accept': 'application/json',
+            'Accept-Language': 'zh-TW,zh,en',
+          },
+        ),
+      );
       final res = await dio.get<dynamic>(
         '$_nominatim/search',
         queryParameters: {
@@ -183,15 +185,17 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
   Future<void> _reverseGeocode(LatLng p) async {
     setState(() => _reversing = true);
     try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 8),
-        headers: {
-          'User-Agent': _userAgent,
-          'Accept': 'application/json',
-          'Accept-Language': 'zh-TW,zh,en',
-        },
-      ));
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 8),
+          receiveTimeout: const Duration(seconds: 8),
+          headers: {
+            'User-Agent': _userAgent,
+            'Accept': 'application/json',
+            'Accept-Language': 'zh-TW,zh,en',
+          },
+        ),
+      );
       final res = await dio.get<dynamic>(
         '$_nominatim/reverse',
         queryParameters: {
@@ -243,11 +247,13 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
     final addr = _address.trim().isNotEmpty
         ? _address.trim()
         : _searchCtrl.text.trim();
-    context.pop(LocationPickedResult(
-      latitude: _picked.latitude,
-      longitude: _picked.longitude,
-      address: addr,
-    ));
+    context.pop(
+      LocationPickedResult(
+        latitude: _picked.latitude,
+        longitude: _picked.longitude,
+        address: addr,
+      ),
+    );
   }
 
   @override
@@ -280,10 +286,7 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
           const Expanded(
             child: Text(
               '選擇地點',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
           ),
         ],
@@ -434,15 +437,20 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.place_rounded,
-                  size: 18, color: AppColors.primary),
+              const Icon(
+                Icons.place_rounded,
+                size: 18,
+                color: AppColors.primary,
+              ),
               const SizedBox(width: 6),
-              const Text('已選位置',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textSecondary,
-                  )),
+              const Text(
+                '已選位置',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary,
+                ),
+              ),
               const Spacer(),
               Text(
                 '${_picked.latitude.toStringAsFixed(5)}, ${_picked.longitude.toStringAsFixed(5)}',

@@ -32,7 +32,8 @@ final _taiwanFit = CameraFit.bounds(
   bounds: LatLngBounds(const LatLng(21.85, 119.4), const LatLng(25.35, 122.05)),
   padding: const EdgeInsets.fromLTRB(16, 128, 16, 90),
 );
-const _lostMarker = AppColors.neutral800;
+// 底圖永遠是亮色，標記與版權字樣固定用亮色模式的值。
+final _lostMarker = AppColors.neutral800.light;
 
 class _MapScreenState extends ConsumerState<MapScreen> {
   final _mapController = MapController();
@@ -349,11 +350,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     color: Colors.white.withValues(alpha: .85),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Text(
+                  child: Text(
                     baseMapAttribution,
                     style: TextStyle(
                       fontSize: 9,
-                      color: AppColors.textSecondary,
+                      color: AppColors.textSecondary.light,
                     ),
                   ),
                 ),
@@ -445,7 +446,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   Marker _marker(Item item) {
     final selected = _selected?.id == item.id;
-    final color = item.type == ItemType.found ? AppColors.primary : _lostMarker;
+    final color = item.type == ItemType.found
+        ? AppColors.primary.light
+        : _lostMarker;
     return Marker(
       point: LatLng(item.latitude, item.longitude),
       width: 46,
@@ -539,7 +542,7 @@ class _FloatingCard extends StatelessWidget {
   final double radius;
   @override
   Widget build(BuildContext context) => Material(
-    color: Colors.white,
+    color: AppColors.surface,
     elevation: 2,
     shadowColor: const Color(0x33282B30),
     borderRadius: BorderRadius.circular(radius),
@@ -580,7 +583,7 @@ class _FilterButton extends StatelessWidget {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: selected ? Colors.white : dotColor,
+                      color: selected ? AppColors.onInk : dotColor,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -591,7 +594,7 @@ class _FilterButton extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? Colors.white : AppColors.textPrimary,
+                    color: selected ? AppColors.onInk : AppColors.textPrimary,
                   ),
                 ),
               ],
@@ -609,7 +612,7 @@ class _SelectedItem extends StatelessWidget {
   final VoidCallback onClose;
   @override
   Widget build(BuildContext context) => Material(
-    color: Colors.white,
+    color: AppColors.surface,
     borderRadius: BorderRadius.circular(16),
     elevation: 4,
     shadowColor: const Color(0x33282B30),

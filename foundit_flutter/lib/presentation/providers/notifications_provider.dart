@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/app_notification.dart';
 import 'core_providers.dart';
 
-final notificationsProvider =
-    FutureProvider.autoDispose<List<AppNotification>>((ref) async {
-  return ref.watch(notificationRepositoryProvider).list();
-});
+final notificationsProvider = FutureProvider.autoDispose<List<AppNotification>>(
+  (ref) async {
+    return ref.watch(notificationRepositoryProvider).list();
+  },
+);
 
 /// 未讀通知數 — 直接打 `/notifications/unread-count`，不再依賴整包通知列表
 final unreadCountAsyncProvider = FutureProvider.autoDispose<int>((ref) async {

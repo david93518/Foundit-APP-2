@@ -41,12 +41,12 @@ class Greeting {
     final prefix = h < 5
         ? '夜深了'
         : h < 11
-            ? '早安'
-            : h < 14
-                ? '午安'
-                : h < 18
-                    ? '下午好'
-                    : '晚安';
+        ? '早安'
+        : h < 14
+        ? '午安'
+        : h < 18
+        ? '下午好'
+        : '晚安';
     return name == null || name.isEmpty ? '$prefix 👋' : '$prefix，$name';
   }
 }

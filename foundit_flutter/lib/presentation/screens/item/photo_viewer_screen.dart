@@ -62,11 +62,13 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                 pageController: _ctrl,
                 itemCount: widget.images.length,
                 onPageChanged: (i) => setState(() => _index = i),
-                backgroundDecoration:
-                    const BoxDecoration(color: Colors.transparent),
+                backgroundDecoration: const BoxDecoration(
+                  color: Colors.transparent,
+                ),
                 builder: (_, i) => PhotoViewGalleryPageOptions(
                   imageProvider: NetworkImage(widget.images[i]),
-                  heroAttributes: widget.heroTag != null && i == widget.initialIndex
+                  heroAttributes:
+                      widget.heroTag != null && i == widget.initialIndex
                       ? PhotoViewHeroAttributes(tag: widget.heroTag!)
                       : null,
                   minScale: PhotoViewComputedScale.contained,
@@ -96,8 +98,10 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
               top: MediaQuery.of(context).padding.top + 16,
               right: 20,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(999),
