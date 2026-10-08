@@ -18,6 +18,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
+    "migration:run:prod": "typeorm migration:run -d dist/database/data-source.js",
     "db:wipe-content": "docker exec -i foundit_postgres psql -U foundit_user -d foundit < scripts/reset-content.sql"
   },
   "dependencies": {

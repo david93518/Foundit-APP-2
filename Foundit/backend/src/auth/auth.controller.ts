@@ -1,5 +1,5 @@
 import {
-  Controller, Post, Body, Param, Patch, UseGuards, Request,
+  Controller, Post, Body, Param, Patch, UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -7,6 +7,8 @@ import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { OAuthDto } from './dto/oauth.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { User } from '../common/entities/user.entity';
 import { toMobileUser } from '../users/user-mobile.serializer';
 
 @ApiTags('認證')
@@ -28,6 +30,15 @@ export class AuthController {
     return { success: true, token, user: toMobileUser(user) };
   }
 
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '登出並撤銷目前帳號的既有 token' })
+  async logout(@CurrentUser() user: User) {
+    await this.authService.logout(user);
+    return { success: true };
+  }
+
   @Post('oauth/:provider')
   @ApiOperation({ summary: '第三方 OAuth 登入 (Google / LINE)' })
   async oauthLogin(@Param('provider') provider: string, @Body() dto: OAuthDto) {
@@ -39,8 +50,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '更新 FCM 推播 Token' })
-  async updateFcmToken(@Request() req: any, @Body('fcm_token') fcmToken: string) {
-    await this.authService.updateFcmToken(req.user.id, fcmToken);
+  async updateFcmToken(@CurrentUser() user: User, @Body('fcm_token') fcmToken: string) {
+    if (typeof fcmToken !== 'string' || fcmToken.length > 512) {
+      return { success: false, message: '推播識別無效' };
+    }
+    await this.authService.updateFcmToken(user.id, fcmToken);
     return { success: true };
   }
 }

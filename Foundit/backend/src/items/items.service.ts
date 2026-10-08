@@ -1,17 +1,22 @@
 import {
-  Injectable, NotFoundException, ForbiddenException,
+  BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Item, ItemStatus, ItemType } from '../common/entities/item.entity';
 import { User } from '../common/entities/user.entity';
+import { Chat } from '../common/entities/chat.entity';
 import { CreateItemDto } from './dto/create-item.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
 import { QueryItemDto } from './dto/query-item.dto';
+import { normalizeCoordinates } from './coordinates';
+import { isUuid } from '../common/ids';
 
 @Injectable()
 export class ItemsService {
   constructor(
     @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
+    @Optional() @InjectRepository(User) private readonly userRepo?: Repository<User>,
   ) {}
 
   async findAll(query: QueryItemDto): Promise<{ data: Item[]; total: number; hasMore: boolean }> {
@@ -21,7 +26,8 @@ export class ItemsService {
     const qb = this.itemRepo
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.user', 'user')
-      .where('item.status = :status', { status: ItemStatus.ACTIVE });
+      .where('item.status = :status', { status: ItemStatus.ACTIVE })
+      .andWhere('item.hidden_at IS NULL');
 
     this.applyFilters(qb, query);
 
@@ -33,47 +39,96 @@ export class ItemsService {
     return { data, total, hasMore: page * pageSize < total };
   }
 
-  async findOne(id: string): Promise<Item> {
+  async findOne(id: string, viewerId?: string | null): Promise<Item> {
+    // 非 uuid 直接當作不存在，避免 Postgres 型別錯誤變成 500。
+    if (!isUuid(id)) throw new NotFoundException('物品不存在');
     const item = await this.itemRepo.findOne({
       where: { id },
       relations: ['user'],
     });
     if (!item) throw new NotFoundException('物品不存在');
+    const visible = item.status === ItemStatus.ACTIVE && !item.hiddenAt;
+    if (!visible && item.userId !== viewerId) throw new NotFoundException('物品不存在');
     return item;
   }
 
   async create(dto: CreateItemDto, user: User): Promise<Item> {
+    if (user.status !== 'active') throw new ForbiddenException('帳號無法刊登');
+    if (dto.termsAccepted !== true || !dto.termsVersion?.trim()) {
+      throw new BadRequestException('請先同意刊登規範');
+    }
+    if (this.userRepo) {
+      await this.userRepo.update(user.id, { termsVersion: dto.termsVersion.trim() });
+    }
+    const coords = normalizeCoordinates(dto.latitude, dto.longitude);
     const item = this.itemRepo.create({
-      ...dto,
+      type: dto.type,
       userId: user.id,
-      images: dto.images ?? [],
+      title: dto.title.trim(),
+      category: dto.category.trim(),
+      description: dto.description?.trim() ?? '',
+      color: dto.color?.trim() ?? '',
+      images: (dto.images ?? []).slice(0, 6),
+      latitude: coords?.latitude ?? null,
+      longitude: coords?.longitude ?? null,
+      locationName: dto.locationName?.trim() ?? '',
       lostAt: dto.lostAt ? new Date(dto.lostAt) : new Date(),
+      reward: dto.reward ?? 0,
+      hasReward: dto.hasReward ?? false,
+      storageLocation: dto.storageLocation?.trim() ?? '',
+      handedToPolice: dto.handedToPolice ?? false,
+      status: ItemStatus.ACTIVE,
     });
     const saved = await this.itemRepo.save(item);
     saved.user = user;
     return saved;
   }
 
-  async update(id: string, dto: Partial<CreateItemDto>, user: User): Promise<Item> {
-    const item = await this.findOne(id);
+  async update(id: string, dto: UpdateItemDto, user: User): Promise<Item> {
+    if (!isUuid(id)) throw new NotFoundException('物品不存在');
+    const item = await this.itemRepo.findOne({ where: { id }, relations: ['user'] });
+    if (!item) throw new NotFoundException('物品不存在');
     if (item.userId !== user.id) throw new ForbiddenException('無權限修改此物品');
 
-    const { lostAt, ...rest } = dto;
-    const updateData: Partial<Item> = { ...rest };
-    if (lostAt) updateData.lostAt = new Date(lostAt);
-
-    Object.assign(item, updateData);
+    if (dto.title !== undefined) item.title = dto.title.trim();
+    if (dto.category !== undefined) item.category = dto.category.trim();
+    if (dto.description !== undefined) item.description = dto.description.trim();
+    if (dto.color !== undefined) item.color = dto.color.trim();
+    if (dto.images !== undefined) item.images = dto.images.slice(0, 6);
+    if (dto.locationName !== undefined) item.locationName = dto.locationName.trim();
+    if (dto.reward !== undefined) item.reward = dto.reward;
+    if (dto.hasReward !== undefined) item.hasReward = dto.hasReward;
+    if (dto.storageLocation !== undefined) item.storageLocation = dto.storageLocation.trim();
+    if (dto.handedToPolice !== undefined) item.handedToPolice = dto.handedToPolice;
+    if (dto.lostAt !== undefined) item.lostAt = new Date(dto.lostAt);
+    if (dto.latitude !== undefined || dto.longitude !== undefined) {
+      const coords = normalizeCoordinates(
+        dto.latitude ?? (item.latitude == null ? null : Number(item.latitude)),
+        dto.longitude ?? (item.longitude == null ? null : Number(item.longitude)),
+      );
+      item.latitude = coords?.latitude ?? null;
+      item.longitude = coords?.longitude ?? null;
+    }
     return this.itemRepo.save(item);
   }
 
   async remove(id: string, user: User): Promise<void> {
-    const item = await this.findOne(id);
+    if (!isUuid(id)) throw new NotFoundException('物品不存在');
+    const item = await this.itemRepo.findOne({ where: { id } });
+    if (!item) throw new NotFoundException('物品不存在');
     if (item.userId !== user.id) throw new ForbiddenException('無權限刪除此物品');
+    const chatCount = await this.itemRepo.manager.getRepository(Chat).count({ where: { itemId: id } });
+    if (chatCount > 0) {
+      item.status = ItemStatus.CLOSED;
+      item.hiddenAt = new Date();
+      await this.itemRepo.save(item);
+      return;
+    }
     await this.itemRepo.remove(item);
   }
 
   async resolve(id: string, user: User): Promise<void> {
-    const item = await this.findOne(id);
+    const item = await this.findOne(id, user.id);
     if (item.userId !== user.id) throw new ForbiddenException('無權限操作此物品');
     item.status = ItemStatus.RESOLVED;
     await this.itemRepo.save(item);
@@ -160,12 +215,14 @@ export class ItemsService {
   }
 
   /** 供 AI 配對使用 */
-  async findForMatch(excludeItemId: string, keywords: string[]): Promise<Item[]> {
+  async findForMatch(excludeItemId: string | null, keywords: string[]): Promise<Item[]> {
     const qb = this.itemRepo
       .createQueryBuilder('item')
       .leftJoinAndSelect('item.user', 'user')
       .where('item.status = :status', { status: ItemStatus.ACTIVE })
-      .andWhere('item.id != :id', { id: excludeItemId });
+      .andWhere('item.hidden_at IS NULL');
+    // 只有指定來源物品時才排除它；過去傳入 '__none__' 會讓 uuid 比對直接 500。
+    if (excludeItemId) qb.andWhere('item.id != :id', { id: excludeItemId });
 
     if (keywords.length > 0) {
       const conditions = keywords.map((_, i) => `(item.title ILIKE :kw${i} OR item.description ILIKE :kw${i})`);
@@ -184,10 +241,19 @@ export class ItemsService {
     if (query.category) {
       qb.andWhere('item.category = :category', { category: query.category });
     }
-    if (query.keyword) {
+    const area = query.area?.trim().replace(/臺/g, '台');
+    if (area && area !== '全部地區') {
+      // Existing records store the city in location_name, sometimes as 臺北/臺中.
+      // STRPOS treats the selected area literally, including any % or _ characters.
+      qb.andWhere(`STRPOS(REPLACE("item"."location_name", '臺', '台'), :area) > 0`, {
+        area,
+      });
+    }
+    if (query.keyword?.trim()) {
+      const kw = query.keyword.trim().replace(/臺/g, '台');
       qb.andWhere(
-        '(item.title ILIKE :kw OR item.description ILIKE :kw)',
-        { kw: `%${query.keyword}%` },
+        `(REPLACE("item"."title", '臺', '台') ILIKE :kw OR REPLACE("item"."description", '臺', '台') ILIKE :kw OR REPLACE("item"."location_name", '臺', '台') ILIKE :kw OR REPLACE("item"."category", '臺', '台') ILIKE :kw)`,
+        { kw: `%${kw}%` },
       );
     }
     if (query.has_reward) {

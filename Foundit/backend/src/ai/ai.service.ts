@@ -33,7 +33,7 @@ export class AiService {
     }
 
     const candidates = await this.itemsService.findForMatch(
-      params.itemId ?? '__none__',
+      params.itemId ?? null,
       keywords,
     );
 

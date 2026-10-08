@@ -20,8 +20,8 @@ export class SeedService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    if (process.env.SEED_SAMPLE_DATA === 'false') {
-      this.log.log('已設定 SEED_SAMPLE_DATA=false，略過示範資料');
+    if (process.env.NODE_ENV === 'production' || process.env.SEED_SAMPLE_DATA === 'false') {
+      this.log.log('正式環境或已關閉示範資料，略過 seed');
       return;
     }
 

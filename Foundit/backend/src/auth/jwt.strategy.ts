@@ -5,6 +5,8 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../common/entities/user.entity';
+import { readJwtSecret } from './jwt-secret';
+import { AccessTokenPayload, assertActiveSession } from './session';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -15,13 +17,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('JWT_SECRET') ?? 'fallback-secret',
+      secretOrKey: readJwtSecret(config),
     });
   }
 
-  async validate(payload: { sub: string }): Promise<User> {
+  async validate(payload: AccessTokenPayload): Promise<User> {
+    if (!payload?.sub) throw new UnauthorizedException('登入已失效');
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
-    if (!user) throw new UnauthorizedException('帳號不存在');
-    return user;
+    return assertActiveSession(user, payload.tv);
   }
 }

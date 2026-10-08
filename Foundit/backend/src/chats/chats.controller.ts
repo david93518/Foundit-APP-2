@@ -8,9 +8,17 @@ import { ChatsGateway } from './chats.gateway';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { toMobileChat, toMobileMessage } from './chat-mobile.serializer';
+import { IsUUID } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
+
+class MarkReadDto {
+  @ApiProperty()
+  @IsUUID()
+  up_to_message_id: string;
+}
 
 @ApiTags('聊天')
 @ApiBearerAuth()
@@ -49,9 +57,15 @@ export class ChatsController {
     @Param('id') id: string,
     @CurrentUser() user: User,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('page_size', new DefaultValuePipe(50), ParseIntPipe) pageSize: number,
+    @Query('before') before?: string,
+    @Query('limit') limitRaw?: string,
   ) {
-    const rows = await this.chatsService.getMessages(id, user.id, page, pageSize);
+    const limit = Number(limitRaw ?? 50);
+    const rows = await this.chatsService.getMessages(id, user.id, {
+      limit: Number.isFinite(limit) ? limit : 50,
+      before,
+      page,
+    });
     return { success: true, data: rows.map(toMobileMessage) };
   }
 
@@ -69,10 +83,18 @@ export class ChatsController {
   }
 
   @Patch(':id/read')
-  @ApiOperation({ summary: '將聊天室所有對方訊息標記為已讀' })
-  async markRead(@Param('id') id: string, @CurrentUser() user: User) {
-    await this.chatsService.markRead(id, user.id);
-    this.chatsGateway.pushToChat(id, 'read', { chatId: id, userId: user.id });
+  @ApiOperation({ summary: '將已載入、且不晚於指定訊息的對方訊息標為已讀' })
+  async markRead(
+    @Param('id') id: string,
+    @Body() dto: MarkReadDto,
+    @CurrentUser() user: User,
+  ) {
+    await this.chatsService.markRead(id, user.id, dto.up_to_message_id);
+    this.chatsGateway.pushToChat(id, 'read', {
+      chatId: id,
+      userId: user.id,
+      upToMessageId: dto.up_to_message_id,
+    });
     return { success: true };
   }
 }

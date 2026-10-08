@@ -7,20 +7,27 @@ import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { SocketIoAdapter } from './websocket/socket-io.adapter';
+import { QrLandingController } from './qr/qr-landing.controller';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.useWebSocketAdapter(new SocketIoAdapter(app));
   const logger = new Logger('Bootstrap');
 
-  // 全域 Pipe：驗證請求體
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+  app.useGlobalPipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  }));
 
-  // 全域例外過濾器
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // CORS（Android App 不需要，保留給 Web 使用）
-  app.enableCors({ origin: '*' });
+  const production = process.env.NODE_ENV === 'production';
+  const origins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  app.enableCors({ origin: production ? origins : (origins.length > 0 ? origins : true) });
 
   // 靜態資源：圖片上傳目錄
   const uploadsDir = join(process.cwd(), 'uploads');
@@ -41,6 +48,17 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT ?? 3000;
+  const landing = app.get(QrLandingController);
+  app.getHttpAdapter().get('/qr/:code', async (req, res, next) => {
+    try {
+      const code = String((req as { params?: { code?: string } }).params?.code ?? '');
+      const html = await landing.page(code);
+      const response = res as { status: (status: number) => { type: (value: string) => { set: (key: string, header: string) => { send: (body: string) => void } } } };
+      response.status(200).type('html').set('Cache-Control', 'no-store').send(html);
+    } catch (error) {
+      next?.(error);
+    }
+  });
   await app.listen(port);
   logger.log(`🚀 Server running on http://localhost:${port}`);
   logger.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);

@@ -42,8 +42,21 @@ export class User {
   @Column({ name: 'is_verified', default: false })
   isVerified: boolean;
 
-  @Column({ name: 'fcm_token', nullable: true })
-  fcmToken: string;
+  @Column({ name: 'fcm_token', type: 'varchar', nullable: true })
+  fcmToken: string | null;
+
+  /** 登出、停權、刪帳時遞增，讓舊 access token 失效。 */
+  @Column({ name: 'token_version', type: 'int', default: 0 })
+  tokenVersion: number;
+
+  @Column({ type: 'varchar', length: 20, default: 'user' })
+  role: string;
+
+  @Column({ type: 'varchar', length: 20, default: 'active' })
+  status: string;
+
+  @Column({ name: 'terms_version', type: 'varchar', length: 32, default: '' })
+  termsVersion: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

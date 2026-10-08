@@ -4,6 +4,7 @@ import { PointsService } from './points.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
+import { toPublicProfile } from '../users/public-profile';
 
 @ApiTags('積分')
 @Controller()
@@ -22,7 +23,13 @@ export class PointsController {
   @Get('leaderboard')
   @ApiOperation({ summary: '積分排行榜' })
   async getLeaderboard() {
-    const data = await this.pointsService.getLeaderboard();
-    return { success: true, data };
+    const rows = await this.pointsService.getLeaderboard();
+    return {
+      success: true,
+      data: rows.map((row) => ({
+        points: row.points,
+        user: row.user ? toPublicProfile(row.user) : null,
+      })),
+    };
   }
 }

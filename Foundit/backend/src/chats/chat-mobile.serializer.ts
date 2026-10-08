@@ -25,6 +25,7 @@ export function toMobileMessage(msg: MessageWithSender): Record<string, unknown>
     sender_avatar: s?.avatarUrl ?? '',
     content: msg.content ?? '',
     type: msg.type,
+    client_message_id: msg.clientMessageId ?? null,
     read_at: msg.readAt ? new Date(msg.readAt).getTime() : null,
     created_at: msg.createdAt ? new Date(msg.createdAt).getTime() : Date.now(),
   };
@@ -49,7 +50,6 @@ export function toMobileChat(chat: ChatWithRels, currentUserId: string): Record<
     participants: participants.map((p) => ({
       id: p.id,
       name: p.name ?? '',
-      phone: p.phone ?? '',
       avatar_url: p.avatarUrl ?? '',
     })),
     other_user_name: other?.name ?? '',

@@ -6,7 +6,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
 import { QrItem } from '../common/entities/qr-item.entity';
-import { toMobileUser } from '../users/user-mobile.serializer';
+import { toPublicProfile } from '../users/public-profile';
 
 function toMobileQrItem(q: QrItem): Record<string, unknown> {
   return {
@@ -59,7 +59,7 @@ export class QrController {
     return {
       success: true,
       qr_item: toMobileQrItem(qrItem),
-      owner: toMobileUser(owner),
+      owner: toPublicProfile(owner),
     };
   }
 }

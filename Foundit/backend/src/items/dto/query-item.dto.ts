@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsBoolean, IsNumber, Min } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsBoolean, IsNumber, Max, MaxLength, Min } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ItemType, ItemStatus } from '../../common/entities/item.entity';
@@ -25,6 +25,7 @@ export class QueryItemDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   keyword?: string;
 
   @ApiPropertyOptional()
@@ -49,18 +50,24 @@ export class QueryItemDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   lat?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   lng?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0.1)
+  @Max(100)
   radius?: number;
 
   @ApiPropertyOptional({ default: 1 })
@@ -75,5 +82,6 @@ export class QueryItemDto {
   @Type(() => Number)
   @IsNumber()
   @Min(1)
+  @Max(50)
   page_size?: number = 20;
 }

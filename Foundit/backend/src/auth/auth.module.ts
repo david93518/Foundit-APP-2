@@ -9,22 +9,25 @@ import { JwtStrategy } from './jwt.strategy';
 import { OtpService } from './otp.service';
 import { User } from '../common/entities/user.entity';
 import { UserPoints } from '../common/entities/user-points.entity';
+import { ChatsModule } from '../chats/chats.module';
+import { readJwtExpiresIn, readJwtSecret } from './jwt-secret';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, UserPoints]),
     PassportModule,
+    ChatsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET') ?? 'fallback-secret',
-        signOptions: { expiresIn: (config.get('JWT_EXPIRES_IN', '30d') as any) },
+        secret: readJwtSecret(config),
+        signOptions: { expiresIn: readJwtExpiresIn(config) as any },
       }),
       inject: [ConfigService],
     }),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, OtpService],
-  exports: [AuthService],
+  exports: [AuthService, OtpService],
 })
 export class AuthModule {}

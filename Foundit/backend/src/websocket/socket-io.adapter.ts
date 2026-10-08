@@ -15,7 +15,11 @@ export class SocketIoAdapter extends IoAdapter {
     return super.createIOServer(port, {
       ...options,
       allowEIO3: true,
-      cors: { origin: '*' },
+      cors: options?.cors ?? {
+        origin: process.env.NODE_ENV === 'production'
+          ? (process.env.CORS_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)
+          : true,
+      },
     });
   }
 }

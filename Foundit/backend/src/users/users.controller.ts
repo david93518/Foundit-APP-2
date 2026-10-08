@@ -1,6 +1,6 @@
-import { Controller, Get, Patch, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsString, IsOptional, MaxLength, IsEmail } from 'class-validator';
+import { IsEmail, IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -33,6 +33,20 @@ class UpdateProfileDto {
   email?: string;
 }
 
+class DeleteAccountDto {
+  @ApiProperty({ example: '123456' })
+  @IsString()
+  @Length(6, 6)
+  @Matches(/^\d{6}$/)
+  otp: string;
+}
+
+class DeleteGoogleAccountDto {
+  @IsString()
+  @Length(20, 8192)
+  idToken: string;
+}
+
 @ApiTags('用戶')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -57,6 +71,20 @@ export class UsersController {
       email: dto.email,
     });
     return { success: true, data: toMobileUser(data) };
+  }
+
+  @Post('me/delete')
+  @ApiOperation({ summary: '以簡訊驗證碼重新確認後刪除帳號' })
+  async deleteAccount(@CurrentUser() user: User, @Body() dto: DeleteAccountDto) {
+    await this.usersService.deleteAccount(user.id, dto.otp);
+    return { success: true, message: '帳號已刪除' };
+  }
+
+  @Post('me/delete-google')
+  @ApiOperation({ summary: '以同一 Google 帳號重新確認後刪除帳號' })
+  async deleteGoogleAccount(@CurrentUser() user: User, @Body() dto: DeleteGoogleAccountDto) {
+    await this.usersService.deleteGoogleAccount(user.id, dto.idToken);
+    return { success: true, message: '帳號已刪除' };
   }
 
   @Get('me/items')

@@ -9,14 +9,16 @@ import { Chat } from '../common/entities/chat.entity';
 import { Message } from '../common/entities/message.entity';
 import { Item } from '../common/entities/item.entity';
 import { User } from '../common/entities/user.entity';
+import { Block } from '../common/entities/block.entity';
+import { readJwtSecret } from '../auth/jwt-secret';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Chat, Message, Item, User]),
+    TypeOrmModule.forFeature([Chat, Message, Item, User, Block]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET') ?? 'fallback-secret',
+        secret: readJwtSecret(config),
       }),
       inject: [ConfigService],
     }),

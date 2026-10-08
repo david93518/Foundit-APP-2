@@ -10,6 +10,10 @@ import { QrModule } from './qr/qr.module';
 import { PointsModule } from './points/points.module';
 import { AiModule } from './ai/ai.module';
 import { UploadModule } from './upload/upload.module';
+import { ModerationModule } from './moderation/moderation.module';
+import { HealthController } from './health.controller';
+import { AbuseLimitInterceptor } from './common/abuse-limit.interceptor';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { User } from './common/entities/user.entity';
 import { Item } from './common/entities/item.entity';
 import { Chat } from './common/entities/chat.entity';
@@ -18,6 +22,9 @@ import { Notification } from './common/entities/notification.entity';
 import { QrItem } from './common/entities/qr-item.entity';
 import { UserPoints } from './common/entities/user-points.entity';
 import { PointEvent } from './common/entities/point-event.entity';
+import { Report } from './common/entities/report.entity';
+import { Block } from './common/entities/block.entity';
+import { AdminAction } from './common/entities/admin-action.entity';
 import { DatabaseModule } from './database/database.module';
 
 @Module({
@@ -33,7 +40,7 @@ import { DatabaseModule } from './database/database.module';
         database: config.get<string>('DB_NAME', 'foundit'),
         username: config.get<string>('DB_USER', 'foundit_user'),
         password: config.get<string>('DB_PASS', 'foundit_pass'),
-        entities: [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent],
+        entities: [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction],
         synchronize: config.get<string>('NODE_ENV') !== 'production',
         logging: config.get<string>('NODE_ENV') === 'development',
       }),
@@ -48,6 +55,9 @@ import { DatabaseModule } from './database/database.module';
     PointsModule,
     AiModule,
     UploadModule,
+    ModerationModule,
   ],
+  controllers: [HealthController],
+  providers: [{ provide: APP_INTERCEPTOR, useClass: AbuseLimitInterceptor }],
 })
 export class AppModule {}

@@ -5,9 +5,11 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ItemsService } from './items.service';
 import { CreateItemDto } from './dto/create-item.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
 import { QueryItemDto } from './dto/query-item.dto';
 import { toMobileItem } from './item-mobile.serializer';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
 
@@ -31,9 +33,10 @@ export class ItemsController {
   }
 
   @Get(':id')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: '取得單一物品詳情' })
-  async findOne(@Param('id') id: string) {
-    const data = await this.itemsService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user?: User) {
+    const data = await this.itemsService.findOne(id, user?.id);
     return { success: true, data: toMobileItem(data) };
   }
 
@@ -52,7 +55,7 @@ export class ItemsController {
   @ApiOperation({ summary: '更新物品資訊' })
   async update(
     @Param('id') id: string,
-    @Body() dto: Partial<CreateItemDto>,
+    @Body() dto: UpdateItemDto,
     @CurrentUser() user: User,
   ) {
     const data = await this.itemsService.update(id, dto, user);

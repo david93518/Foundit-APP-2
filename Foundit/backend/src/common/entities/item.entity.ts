@@ -58,10 +58,10 @@ export class Item {
   images: string[];
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
-  latitude: number;
+  latitude: number | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
-  longitude: number;
+  longitude: number | null;
 
   @Column({ name: 'location_name', default: '' })
   locationName: string;
@@ -83,6 +83,10 @@ export class Item {
 
   @Column({ type: 'enum', enum: ItemStatus, default: ItemStatus.ACTIVE })
   status: ItemStatus;
+
+  /** 治理隱藏或刪帳後，公開列表、詳情與地圖都不可讀。 */
+  @Column({ name: 'hidden_at', type: 'timestamptz', nullable: true })
+  hiddenAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
