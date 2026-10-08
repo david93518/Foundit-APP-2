@@ -1,0 +1,16 @@
+# 私人移交資料（密碼、私鑰、token）絕不進版本庫
+FOUND-IT-私人移交-*/
+
+# 建置輸出、封存檔、暫存與 IDE 設定
+Foundit/backend/dist/
+*.tar.gz
+*.log
+tmp/
+output/
+.idea/
+
+# 驗收截圖含帳號資訊，不放公開 repo
+docs/evidence/
+
+# 依賴套件
+node_modules/
