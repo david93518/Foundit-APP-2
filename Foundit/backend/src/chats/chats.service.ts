@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ForbiddenException, Injectable, NotFoundException,
+  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -11,59 +11,93 @@ import { Block } from '../common/entities/block.entity';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { isUuid } from '../common/ids';
+import { QrService } from '../qr/qr.service';
+import { ChatPushService } from './chat-push.service';
+
+type ChatSubject = {
+  key: { itemId: string } | { qrItemId: string };
+  isQr: boolean;
+  owner: User;
+  title: string;
+};
 
 @Injectable()
 export class ChatsService {
+  private readonly logger = new Logger(ChatsService.name);
+
   constructor(
     @InjectRepository(Chat) private readonly chatRepo: Repository<Chat>,
     @InjectRepository(Message) private readonly msgRepo: Repository<Message>,
     @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Block) private readonly blockRepo: Repository<Block>,
+    private readonly qrService: QrService,
+    private readonly chatPush: ChatPushService,
   ) {}
 
   async createOrGet(dto: CreateChatDto, requester: User): Promise<Chat> {
-    const item = await this.itemRepo.findOne({
-      where: { id: dto.item_id },
-      relations: ['user'],
-    });
-    if (!item || item.status !== ItemStatus.ACTIVE || item.hiddenAt) {
-      throw new NotFoundException('物品不存在');
+    if (dto.item_id && dto.qr_code) {
+      throw new BadRequestException('請只選擇一個聯絡對象');
     }
-    if (item.userId === requester.id) {
-      throw new BadRequestException('不能和自己的物品開啟聊天');
+    const subject = dto.qr_code
+      ? await this.qrSubject(dto.qr_code)
+      : await this.itemSubject(dto.item_id ?? '');
+    if (subject.owner.id === requester.id) {
+      throw new BadRequestException(
+        subject.isQr ? '這是你自己的防丟牌' : '不能和自己的物品開啟聊天',
+      );
     }
-    if (item.user?.status !== 'active') {
-      throw new BadRequestException('無法聯絡這個刊登者');
+    if (subject.owner.status !== 'active') {
+      throw new BadRequestException('無法聯絡這個物主');
     }
-    await this.assertNotBlocked(requester.id, item.userId);
+    await this.assertNotBlocked(requester.id, subject.owner.id);
 
-    const chatId = await this.chatRepo.manager.transaction(async (manager) => {
-      const existing = await manager.findOne(Chat, {
-        where: { itemId: dto.item_id, requesterId: requester.id },
-      });
-      if (existing) return existing.id;
+    const where = { ...subject.key, requesterId: requester.id };
+    const { id: chatId, created } = await this.chatRepo.manager.transaction(async (manager) => {
+      const existing = await manager.findOne(Chat, { where });
+      if (existing) return { id: existing.id, created: false };
 
-      const chat = manager.create(Chat, { itemId: dto.item_id, requesterId: requester.id });
-      chat.participants = [requester, item.user];
+      const chat = manager.create(Chat, { itemId: null, qrItemId: null, ...where });
+      chat.participants = [requester, subject.owner];
       try {
         const saved = await manager.save(chat);
         await manager.save(manager.create(Message, {
           chatId: saved.id,
           senderId: requester.id,
-          content: `${requester.name} 就「${item.title}」發起聯絡`,
+          content: subject.isQr
+            ? `${requester.name} 掃描了防丟牌「${subject.title}」並發起聯絡`
+            : `${requester.name} 就「${subject.title}」發起聯絡`,
           type: MessageType.SYSTEM,
         }));
-        return saved.id;
+        return { id: saved.id, created: true };
       } catch (error) {
         if (!this.isUniqueViolation(error)) throw error;
-        const again = await manager.findOne(Chat, {
-          where: { itemId: dto.item_id, requesterId: requester.id },
-        });
+        const again = await manager.findOne(Chat, { where });
         if (!again) throw error;
-        return again.id;
+        return { id: again.id, created: false };
       }
     });
-    return this.loadChat(chatId);
+    const chat = await this.loadChat(chatId);
+    if (created && subject.isQr) {
+      this.background(() => this.chatPush.tagScanned(chat, requester, subject.title));
+    }
+    return chat;
+  }
+
+  private async itemSubject(itemId: string): Promise<ChatSubject> {
+    const item = await this.itemRepo.findOne({
+      where: { id: itemId },
+      relations: ['user'],
+    });
+    if (!item || item.status !== ItemStatus.ACTIVE || item.hiddenAt || !item.user) {
+      throw new NotFoundException('物品不存在');
+    }
+    return { key: { itemId: item.id }, isQr: false, owner: item.user, title: item.title };
+  }
+
+  /** scanByCode 已排除撤銷的貼紙與已刪除的帳號。 */
+  private async qrSubject(code: string): Promise<ChatSubject> {
+    const { qrItem, owner } = await this.qrService.scanByCode(code);
+    return { key: { qrItemId: qrItem.id }, isQr: true, owner, title: qrItem.name };
   }
 
   async findAllForUser(
@@ -74,6 +108,7 @@ export class ChatsService {
       .innerJoin('chat.participants', 'p', 'p.id = :uid', { uid: userId })
       .leftJoinAndSelect('chat.participants', 'participant')
       .leftJoinAndSelect('chat.item', 'item')
+      .leftJoinAndSelect('chat.qrItem', 'qrItem')
       .orderBy('chat.updated_at', 'DESC')
       .getMany();
 
@@ -180,6 +215,9 @@ export class ChatsService {
       }));
       await this.chatRepo.update(chatId, { updatedAt: new Date() });
       saved.sender = sender;
+      this.background(() =>
+        this.chatPush.newMessage(chat, saved, sender, (userId) => this.unreadTotalForUser(userId)),
+      );
       return saved;
     } catch (error) {
       if (dto.client_message_id && this.isUniqueViolation(error)) {
@@ -233,7 +271,7 @@ export class ChatsService {
   private async loadChat(id: string): Promise<Chat> {
     const chat = await this.chatRepo.findOne({
       where: { id },
-      relations: ['participants', 'item'],
+      relations: ['participants', 'item', 'qrItem'],
     });
     if (!chat) throw new NotFoundException('聊天室不存在');
     const lastMsgs = await this.msgRepo.find({
@@ -243,6 +281,13 @@ export class ChatsService {
     });
     (chat as Chat & { messages?: Message[] }).messages = lastMsgs;
     return chat;
+  }
+
+  /** 推播不能拖慢或弄壞送訊息：在背景執行，失敗只記錄。 */
+  private background(task: () => Promise<void>): void {
+    void task().catch((error: unknown) => {
+      this.logger.warn(`推播處理失敗：${(error as Error)?.message ?? error}`);
+    });
   }
 
   private isUniqueViolation(error: unknown): boolean {

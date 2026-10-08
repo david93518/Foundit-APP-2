@@ -14,7 +14,7 @@ export class QrLandingController {
       return this.html(
         '這個物品已登記',
         this.escape(qrItem.name || '未命名物品'),
-        '請開啟 FOUND !T 與物主聯絡。這個頁面不會顯示電話、email 或其他私人聯絡方式。',
+        '撿到了嗎？請下載 FOUND !T，在「防丟牌」頁按右上角的掃描，再掃一次這張貼紙，就能直接傳訊息給物主。這個頁面不會顯示電話、email 或其他私人聯絡方式。',
       );
     } catch {
       return this.html('這個 QR 已失效', '找不到可聯絡的物品', '貼紙可能已撤銷或連結不正確。');

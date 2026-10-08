@@ -2,9 +2,11 @@ import { Chat } from '../common/entities/chat.entity';
 import { Message } from '../common/entities/message.entity';
 import { User } from '../common/entities/user.entity';
 import { Item } from '../common/entities/item.entity';
+import { QrItem } from '../common/entities/qr-item.entity';
 
 type ChatWithRels = Chat & {
   item?: Item | null;
+  qrItem?: QrItem | null;
   participants?: User[];
   messages?: Message[];
   /** 由 service 層計算後夾帶 */
@@ -44,8 +46,9 @@ export function toMobileChat(chat: ChatWithRels, currentUserId: string): Record<
 
   return {
     id: chat.id,
-    item_id: chat.itemId,
-    item_title: item?.title ?? '',
+    item_id: chat.itemId ?? '',
+    qr_item_id: chat.qrItemId ?? '',
+    item_title: item?.title ?? chat.qrItem?.name ?? '',
     item_image: firstImage,
     participants: participants.map((p) => ({
       id: p.id,

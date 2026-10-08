@@ -80,3 +80,66 @@ describe('AuthService oauth boundary', () => {
     expect(users.save).not.toHaveBeenCalled();
   });
 });
+
+describe('AuthService admin promotion by email', () => {
+  const verify = verifyGoogleIdToken as jest.MockedFunction<typeof verifyGoogleIdToken>;
+
+  function build(adminEmails: string) {
+    const users = {
+      findOne: jest.fn(),
+      save: jest.fn(async (user) => user),
+      create: jest.fn((user) => user),
+    };
+    const config = {
+      get: (key: string) => {
+        if (key === 'GOOGLE_WEB_CLIENT_ID') return 'client.apps.googleusercontent.com';
+        if (key === 'ADMIN_EMAILS') return adminEmails;
+        return undefined;
+      },
+    } as ConfigService;
+    const service = new AuthService(
+      users as unknown as Repository<User>,
+      { findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as unknown as Repository<UserPoints>,
+      {} as OtpService,
+      { sign: jest.fn(() => 'token') } as unknown as JwtService,
+      config,
+      { disconnectUser: jest.fn() } as unknown as ChatsGateway,
+    );
+    return { users, service };
+  }
+
+  beforeEach(() => verify.mockReset());
+
+  it('promotes a listed Google email on first login, ignoring case and spaces', async () => {
+    const { users, service } = build(' Owner@Example.com ,other@example.com');
+    verify.mockResolvedValue({ sub: 's1', email: 'owner@example.com', name: 'Owner', picture: '', issuedAt: 1 });
+    users.findOne.mockResolvedValue(null);
+    const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
+    expect(user.role).toBe('admin');
+    expect(users.save).toHaveBeenLastCalledWith(expect.objectContaining({ role: 'admin' }));
+  });
+
+  it('promotes an existing Google account the next time it logs in', async () => {
+    const { users, service } = build('owner@example.com');
+    verify.mockResolvedValue({ sub: 's1', email: 'owner@example.com', name: 'Owner', picture: '', issuedAt: 1 });
+    users.findOne.mockResolvedValue({ id: 'u1', status: 'active', role: 'user', name: 'Owner', email: '', googleSub: 's1' });
+    const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
+    expect(user.role).toBe('admin');
+  });
+
+  it('leaves unlisted Google accounts as plain users', async () => {
+    const { users, service } = build('owner@example.com');
+    verify.mockResolvedValue({ sub: 's2', email: 'someone@example.com', name: 'Someone', picture: '', issuedAt: 1 });
+    users.findOne.mockResolvedValue(null);
+    const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
+    expect(user.role).toBe('user');
+  });
+
+  it('never promotes an account whose email is empty even when the list has blanks', async () => {
+    const { users, service } = build(' , ,');
+    verify.mockResolvedValue({ sub: 's3', email: '', name: 'Blank', picture: '', issuedAt: 1 });
+    users.findOne.mockResolvedValue(null);
+    const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
+    expect(user.role).toBe('user');
+  });
+});

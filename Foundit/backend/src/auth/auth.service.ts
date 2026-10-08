@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { User } from '../common/entities/user.entity';
 import { UserPoints } from '../common/entities/user-points.entity';
@@ -90,6 +90,7 @@ export class AuthService {
       user.email = identity.email.slice(0, 120);
       user.isVerified = true;
       user = await this.userRepo.save(user);
+      user = await this.promoteAdmin(user);
       return { token: this.sign(user), user };
     }
 
@@ -106,6 +107,7 @@ export class AuthService {
     });
     user = await this.userRepo.save(user);
     await this.initPoints(user.id);
+    user = await this.promoteAdmin(user);
     return { token: this.sign(user), user };
   }
 
@@ -119,16 +121,32 @@ export class AuthService {
     this.chatsGateway.disconnectUser(userId);
   }
 
+  /** 一個裝置 token 只屬於最後登入的帳號，換帳號後前一位的訊息不會再推到這支手機。 */
   async updateFcmToken(userId: string, fcmToken: string): Promise<void> {
-    await this.userRepo.update(userId, { fcmToken });
+    const token = fcmToken.trim() || null;
+    if (token) {
+      await this.userRepo.update({ fcmToken: token, id: Not(userId) }, { fcmToken: null });
+    }
+    await this.userRepo.update(userId, { fcmToken: token });
   }
 
+  /**
+   * 管理員名單來自環境變數：ADMIN_PHONES（手機登入）與 ADMIN_EMAILS（Google 登入）。
+   * 只在登入時提升，不會自動降級；要撤銷請直接改資料庫的 role。
+   */
   private async promoteAdmin(user: User): Promise<User> {
+    if (user.role === 'admin') return user;
     const phones = (this.config.get<string>('ADMIN_PHONES') ?? '')
       .split(',')
       .map((item) => normalizeTaiwanMobile(item))
       .filter((item) => item.startsWith('09'));
-    if (!phones.includes(user.phone) || user.role === 'admin') return user;
+    const emails = (this.config.get<string>('ADMIN_EMAILS') ?? '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+    const email = (user.email ?? '').trim().toLowerCase();
+    const listed = phones.includes(user.phone) || (email !== '' && emails.includes(email));
+    if (!listed) return user;
     user.role = 'admin';
     return this.userRepo.save(user);
   }

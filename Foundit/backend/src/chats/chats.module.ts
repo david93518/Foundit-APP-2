@@ -11,10 +11,15 @@ import { Item } from '../common/entities/item.entity';
 import { User } from '../common/entities/user.entity';
 import { Block } from '../common/entities/block.entity';
 import { readJwtSecret } from '../auth/jwt-secret';
+import { QrModule } from '../qr/qr.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { ChatPushService } from './chat-push.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Chat, Message, Item, User, Block]),
+    QrModule,
+    NotificationsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -24,7 +29,7 @@ import { readJwtSecret } from '../auth/jwt-secret';
     }),
   ],
   controllers: [ChatsController],
-  providers: [ChatsService, ChatsGateway],
+  providers: [ChatsService, ChatsGateway, ChatPushService],
   exports: [ChatsService, ChatsGateway],
 })
 export class ChatsModule {}

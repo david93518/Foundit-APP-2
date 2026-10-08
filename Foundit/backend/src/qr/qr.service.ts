@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { QrItem } from '../common/entities/qr-item.entity';
 import { User } from '../common/entities/user.entity';
 import { GenerateQrDto } from './dto/generate-qr.dto';
@@ -14,9 +14,22 @@ export class QrService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * 貼紙上的網址一律用目前的 APP_BASE_URL 重建，修正網域後，尚未印出的舊貼紙也會跟著換成新網址。
+   * 查找只看 code，舊網域印出的貼紙在 App 內仍掃得到。
+   */
+  publicUrl(qrItem: Pick<QrItem, 'code' | 'qrCode'>): string {
+    if (!qrItem.code) return qrItem.qrCode;
+    return `${this.baseUrl()}/qr/${qrItem.code}`;
+  }
+
+  private baseUrl(): string {
+    return this.config.get<string>('APP_BASE_URL', 'http://localhost:3000').replace(/\/$/, '');
+  }
+
   async generate(dto: GenerateQrDto, user: User): Promise<QrItem> {
-    const code = uuidv4();
-    const baseUrl = this.config.get<string>('APP_BASE_URL', 'http://localhost:3000').replace(/\/$/, '');
+    const code = randomUUID();
+    const baseUrl = this.baseUrl();
     const qrItem = this.qrRepo.create({
       userId: user.id,
       name: dto.name,

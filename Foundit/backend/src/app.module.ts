@@ -7,6 +7,7 @@ import { ItemsModule } from './items/items.module';
 import { ChatsModule } from './chats/chats.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { QrModule } from './qr/qr.module';
+import { PushModule } from './push/push.module';
 import { PointsModule } from './points/points.module';
 import { AiModule } from './ai/ai.module';
 import { UploadModule } from './upload/upload.module';
@@ -52,6 +53,7 @@ import { DatabaseModule } from './database/database.module';
     ChatsModule,
     NotificationsModule,
     QrModule,
+    PushModule,
     PointsModule,
     AiModule,
     UploadModule,

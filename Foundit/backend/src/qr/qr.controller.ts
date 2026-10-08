@@ -8,13 +8,13 @@ import { User } from '../common/entities/user.entity';
 import { QrItem } from '../common/entities/qr-item.entity';
 import { toPublicProfile } from '../users/public-profile';
 
-function toMobileQrItem(q: QrItem): Record<string, unknown> {
+function toMobileQrItem(q: QrItem, publicUrl: string): Record<string, unknown> {
   return {
     id: q.id,
     user_id: q.userId,
     name: q.name,
     description: q.description ?? '',
-    qr_code: q.qrCode,
+    qr_code: publicUrl,
     qr_image_url: q.qrImageUrl ?? '',
     created_at: q.createdAt ? new Date(q.createdAt).getTime() : Date.now(),
   };
@@ -31,7 +31,7 @@ export class QrController {
   @ApiOperation({ summary: '產生 QR Code 防丟貼紙' })
   async generate(@Body() dto: GenerateQrDto, @CurrentUser() user: User) {
     const data = await this.qrService.generate(dto, user);
-    return { success: true, data: toMobileQrItem(data) };
+    return { success: true, data: toMobileQrItem(data, this.qrService.publicUrl(data)) };
   }
 
   @Get('items')
@@ -40,7 +40,7 @@ export class QrController {
   @ApiOperation({ summary: '取得我的 QR 物品清單' })
   async findAll(@CurrentUser() user: User) {
     const data = await this.qrService.findAllByUser(user.id);
-    return { success: true, data: data.map(toMobileQrItem) };
+    return { success: true, data: data.map((q) => toMobileQrItem(q, this.qrService.publicUrl(q))) };
   }
 
   @Delete('items/:id')
@@ -58,7 +58,7 @@ export class QrController {
     const { qrItem, owner } = await this.qrService.scanByCode(code);
     return {
       success: true,
-      qr_item: toMobileQrItem(qrItem),
+      qr_item: toMobileQrItem(qrItem, this.qrService.publicUrl(qrItem)),
       owner: toPublicProfile(owner),
     };
   }

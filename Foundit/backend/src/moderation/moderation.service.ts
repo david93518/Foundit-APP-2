@@ -10,7 +10,13 @@ import { User } from '../common/entities/user.entity';
 import { Item, ItemStatus } from '../common/entities/item.entity';
 import { ChatsGateway } from '../chats/chats.gateway';
 import { isUuid } from '../common/ids';
-import { CreateReportDto, ResolveReportDto } from './dto/moderation.dto';
+import { AdminListQueryDto, CreateReportDto, ResolveReportDto } from './dto/moderation.dto';
+
+function paging(query: AdminListQueryDto): { page: number; pageSize: number } {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, query.page_size ?? 20));
+  return { page, pageSize };
+}
 
 @Injectable()
 export class ModerationService {
@@ -104,6 +110,74 @@ export class ModerationService {
     await this.users.save(user);
     this.gateway.disconnectUser(userId);
     await this.audit(admin.id, 'user.restore', 'user', userId, reason, 'active');
+  }
+
+  /** 管理端使用者清單：可用名稱／email／手機關鍵字與狀態篩選。 */
+  async listUsers(query: AdminListQueryDto): Promise<{ data: User[]; total: number }> {
+    const { page, pageSize } = paging(query);
+    const qb = this.users
+      .createQueryBuilder('user')
+      .orderBy('user.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+    const q = query.q?.trim();
+    if (q) {
+      qb.andWhere('(user.name ILIKE :q OR user.email ILIKE :q OR user.phone ILIKE :q)', { q: `%${q}%` });
+    }
+    if (query.status) qb.andWhere('user.status = :status', { status: query.status.toLowerCase() });
+    const [data, total] = await qb.getManyAndCount();
+    return { data, total };
+  }
+
+  /** 管理端物品清單：和公開列表不同，已隱藏與已結案的也看得到。 */
+  async listItems(query: AdminListQueryDto): Promise<{ data: Item[]; total: number }> {
+    const { page, pageSize } = paging(query);
+    const qb = this.items
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.user', 'user')
+      .orderBy('item.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+    const q = query.q?.trim();
+    if (q) {
+      qb.andWhere('(item.title ILIKE :q OR item.description ILIKE :q OR item.locationName ILIKE :q)', { q: `%${q}%` });
+    }
+    if (query.status) qb.andWhere('item.status = :status', { status: query.status.toUpperCase() });
+    if (query.hidden === 'true') qb.andWhere('item.hiddenAt IS NOT NULL');
+    if (query.hidden === 'false') qb.andWhere('item.hiddenAt IS NULL');
+    const [data, total] = await qb.getManyAndCount();
+    return { data, total };
+  }
+
+  /** 下架：從公開列表、地圖與詳情頁消失，刊登者本人仍看得到。 */
+  async hideItem(admin: User, itemId: string, reason: string): Promise<Item> {
+    const item = await this.findItem(itemId);
+    item.status = ItemStatus.CLOSED;
+    item.hiddenAt = new Date();
+    const saved = await this.items.save(item);
+    await this.audit(admin.id, 'item.hide', 'item', itemId, reason, 'hidden');
+    return saved;
+  }
+
+  async restoreItem(admin: User, itemId: string, reason: string): Promise<Item> {
+    const item = await this.findItem(itemId);
+    item.status = ItemStatus.ACTIVE;
+    item.hiddenAt = null;
+    const saved = await this.items.save(item);
+    await this.audit(admin.id, 'item.restore', 'item', itemId, reason, 'active');
+    return saved;
+  }
+
+  /** 稽核紀錄只追加；這裡回傳最近 200 筆供後台檢視。 */
+  listActions(): Promise<AdminAction[]> {
+    return this.actions.find({ order: { createdAt: 'DESC' }, take: 200 });
+  }
+
+  private async findItem(itemId: string): Promise<Item> {
+    if (!isUuid(itemId)) throw new NotFoundException('物品不存在');
+    const item = await this.items.findOne({ where: { id: itemId } });
+    if (!item) throw new NotFoundException('物品不存在');
+    return item;
   }
 
   private audit(
