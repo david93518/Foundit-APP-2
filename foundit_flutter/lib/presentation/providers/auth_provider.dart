@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/user.dart';
@@ -6,6 +8,8 @@ import 'core_providers.dart';
 
 /// Auth 全域狀態
 class AuthState {
+  /// 已讀完本機登入快取；路由在此之前停留在啟動畫面。
+  final bool ready;
   final bool loading;
   final AppUser? user;
   final String? error;
@@ -13,6 +17,7 @@ class AuthState {
   final bool otpSent;
 
   const AuthState({
+    this.ready = false,
     this.loading = false,
     this.user,
     this.error,
@@ -23,6 +28,7 @@ class AuthState {
   bool get isLoggedIn => user != null;
 
   AuthState copyWith({
+    bool? ready,
     bool? loading,
     AppUser? user,
     bool clearUser = false,
@@ -30,14 +36,14 @@ class AuthState {
     bool clearError = false,
     bool? otpSending,
     bool? otpSent,
-  }) =>
-      AuthState(
-        loading: loading ?? this.loading,
-        user: clearUser ? null : (user ?? this.user),
-        error: clearError ? null : (error ?? this.error),
-        otpSending: otpSending ?? this.otpSending,
-        otpSent: otpSent ?? this.otpSent,
-      );
+  }) => AuthState(
+    ready: ready ?? this.ready,
+    loading: loading ?? this.loading,
+    user: clearUser ? null : (user ?? this.user),
+    error: clearError ? null : (error ?? this.error),
+    otpSending: otpSending ?? this.otpSending,
+    otpSent: otpSent ?? this.otpSent,
+  );
 }
 
 class AuthNotifier extends StateNotifier<AuthState> {
@@ -47,8 +53,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final AuthRepository _repo;
 
   Future<void> _init() async {
-    final user = await _repo.cachedUser();
-    state = state.copyWith(user: user);
+    AppUser? user;
+    try {
+      user = await _repo.cachedUser();
+    } catch (_) {
+      user = null;
+    }
+    if (!mounted) return;
+    state = state.copyWith(ready: true, user: user);
+    // 背景向後端確認 token 仍有效；失效時 ApiClient 會廣播 401 並觸發登出。
+    if (user != null) unawaited(refresh());
   }
 
   Future<bool> sendOtp(String phone) async {
@@ -97,7 +111,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> refresh() async {
     final user = await _repo.getMe();
-    if (user != null) state = state.copyWith(user: user);
+    if (mounted && user != null && state.user != null) {
+      state = state.copyWith(user: user);
+    }
   }
 
   /// 局部更新；不傳的欄位後端不會動。

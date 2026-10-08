@@ -8,6 +8,7 @@ import 'core/constants/app_constants.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'data/api/api_client.dart';
+import 'core/services/chat_socket_service.dart';
 import 'presentation/providers/auth_provider.dart';
 
 class FounditApp extends ConsumerStatefulWidget {
@@ -19,23 +20,21 @@ class FounditApp extends ConsumerStatefulWidget {
 
 class _FounditAppState extends ConsumerState<FounditApp> {
   StreamSubscription<void>? _unauthorizedSub;
+  final _messenger = GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
     super.initState();
     _unauthorizedSub = ApiClient.onUnauthorized.listen((_) async {
-      // token 失效（401）：強制登出 + 跳到登入頁，避免一直 spinner
+      // token 失效（401）：清掉登入狀態，路由守衛會自動帶回登入頁
+      final wasLoggedIn = ref.read(authProvider).isLoggedIn;
       try {
         await ref.read(authProvider.notifier).logout();
       } catch (_) {}
-      if (!mounted) return;
-      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
-      if (ctx != null) {
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          const SnackBar(content: Text('登入逾時，請重新登入')),
-        );
-      }
-      appRouter.go('/login');
+      if (!mounted || !wasLoggedIn) return;
+      _messenger.currentState?.showSnackBar(
+        const SnackBar(content: Text('登入已過期，請重新登入')),
+      );
     });
   }
 
@@ -47,11 +46,20 @@ class _FounditAppState extends ConsumerState<FounditApp> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<String?>(authProvider.select((state) => state.user?.id), (
+      previous,
+      next,
+    ) {
+      if (previous != next) {
+        ref.read(chatSocketServiceProvider).disconnect();
+      }
+    });
     return MaterialApp.router(
+      scaffoldMessengerKey: _messenger,
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      routerConfig: appRouter,
+      routerConfig: ref.watch(routerProvider),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

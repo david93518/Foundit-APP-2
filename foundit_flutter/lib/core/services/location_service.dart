@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -41,7 +43,7 @@ class LocationResult {
 /// 簡單封裝 `geolocator`：
 /// 1. 確認系統定位開關
 /// 2. 主動請求權限
-/// 3. 取得目前座標（含逾時 fallback 到 last known）
+/// 3. 取得當下座標；不把上次位置當成目前位置。
 class LocationService {
   const LocationService();
 
@@ -64,31 +66,29 @@ class LocationService {
         return const LocationResult(LocationResultCode.permissionDeniedForever);
       }
 
-      Position? pos;
-      try {
-        pos = await Geolocator.getCurrentPosition(
-          locationSettings: LocationSettings(
-            accuracy: LocationAccuracy.high,
-            timeLimit: timeout,
-          ),
-        );
-      } catch (_) {
-        // 主流程失敗 → 用 last known，至少給個位置
-        pos = await Geolocator.getLastKnownPosition();
-        if (pos == null) {
-          return const LocationResult(LocationResultCode.timeout);
-        }
-      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: timeout,
+        ),
+      );
 
       return LocationResult(
         LocationResultCode.ok,
         LatLng(pos.latitude, pos.longitude),
       );
+    } on TimeoutException {
+      return const LocationResult(LocationResultCode.timeout);
+    } on PermissionDeniedException {
+      return const LocationResult(LocationResultCode.permissionDenied);
+    } on LocationServiceDisabledException {
+      return const LocationResult(LocationResultCode.serviceDisabled);
     } catch (_) {
       return const LocationResult(LocationResultCode.unknown);
     }
   }
 }
 
-final locationServiceProvider =
-    Provider<LocationService>((_) => const LocationService());
+final locationServiceProvider = Provider<LocationService>(
+  (_) => const LocationService(),
+);

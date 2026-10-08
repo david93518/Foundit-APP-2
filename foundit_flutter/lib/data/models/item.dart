@@ -120,20 +120,28 @@ class Item {
     );
   }
 
+  /// 依後端 CreateItemDto 的長度上限截斷，避免地圖帶入的長地址造成整筆 400。
+  static String _clip(String value, int max) {
+    final text = value.trim();
+    return text.length <= max ? text : text.substring(0, max);
+  }
+
   Map<String, dynamic> toCreateJson() => {
         'type': type.code,
-        'title': title,
-        'category': category,
-        'description': description,
-        'color': color,
+        'title': _clip(title, 100),
+        'category': _clip(category, 50),
+        'description': _clip(description, 2000),
+        'color': _clip(color, 30),
         'images': images,
-        'latitude': latitude,
-        'longitude': longitude,
-        'locationName': locationName,
+        if (!(latitude == 0 && longitude == 0)) 'latitude': latitude,
+        if (!(latitude == 0 && longitude == 0)) 'longitude': longitude,
+        'locationName': _clip(locationName, 200),
         'lostAt': lostAt.millisecondsSinceEpoch,
         'reward': reward,
         'hasReward': hasReward,
-        'storageLocation': storageLocation,
+        'storageLocation': _clip(storageLocation, 200),
         'handedToPolice': handedToPolice,
+        'termsAccepted': true,
+        'termsVersion': '2026-10-04',
       };
 }

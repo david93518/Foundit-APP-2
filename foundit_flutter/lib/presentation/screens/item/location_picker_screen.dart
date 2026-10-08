@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/location_service.dart';
+import '../../../core/services/map_style_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/utils/app_snackbar.dart';
@@ -375,11 +376,7 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
             onTap: _onMapTap,
           ),
           children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.foundit.app',
-              maxZoom: 19,
-            ),
+            founditBaseMap(),
             MarkerLayer(
               markers: [
                 Marker(
@@ -405,6 +402,14 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
             foregroundColor: AppColors.primary,
             onPressed: _useCurrentLocation,
             child: const Icon(Icons.my_location_rounded),
+          ),
+        ),
+        const Positioned(
+          left: 8,
+          bottom: 6,
+          child: Text(
+            baseMapAttribution,
+            style: TextStyle(fontSize: 9, color: AppColors.textSecondary),
           ),
         ),
       ],

@@ -10,6 +10,7 @@ class AppTheme {
 
   static ThemeData light = ThemeData(
     useMaterial3: true,
+    fontFamily: 'NotoSansTC',
     brightness: Brightness.light,
     scaffoldBackgroundColor: AppColors.background,
     primaryColor: AppColors.primary,
@@ -29,7 +30,11 @@ class AppTheme {
       error: AppColors.error,
       outline: AppColors.divider,
     ),
-    textTheme: AppTypography.textTheme,
+    textTheme: AppTypography.textTheme.apply(
+      fontFamily: 'NotoSansTC',
+      bodyColor: AppColors.textPrimary,
+      displayColor: AppColors.textPrimary,
+    ),
     appBarTheme: AppBarTheme(
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -75,13 +80,27 @@ class AppTheme {
       style: TextButton.styleFrom(
         foregroundColor: AppColors.primary,
         textStyle: AppTypography.textTheme.labelLarge,
+        minimumSize: const Size(48, 48),
       ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(48, 52),
+        textStyle: AppTypography.textTheme.labelLarge,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.allMd),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: AppColors.surfaceSoft,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      hintStyle: AppTypography.textTheme.bodyMedium?.copyWith(color: AppColors.textTertiary),
+      hintStyle: AppTypography.textTheme.bodyMedium?.copyWith(
+        color: AppColors.textTertiary,
+      ),
       border: const OutlineInputBorder(
         borderRadius: AppRadius.allMd,
         borderSide: BorderSide.none,
@@ -112,15 +131,12 @@ class AppTheme {
       thickness: 1,
       space: 1,
     ),
-    iconTheme: const IconThemeData(
-      color: AppColors.textPrimary,
-      size: 22,
-    ),
+    iconTheme: const IconThemeData(color: AppColors.textPrimary, size: 22),
     splashFactory: InkSparkle.splashFactory,
     pageTransitionsTheme: const PageTransitionsTheme(
       builders: {
-        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+        TargetPlatform.iOS: FadeForwardsPageTransitionsBuilder(),
       },
     ),
   );

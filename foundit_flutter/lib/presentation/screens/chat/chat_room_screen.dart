@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +15,8 @@ import '../../../core/utils/haptics.dart';
 import '../../../data/models/chat.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/core_providers.dart';
+import '../../widgets/foundit_ui.dart';
+import 'chat_list_screen.dart' show ChatAvatar;
 
 /// 聊天室畫面 — 接 backend `/chats/:id/messages` (REST) + WebSocket `/chat`
 class ChatRoomScreen extends ConsumerStatefulWidget {
@@ -45,6 +46,14 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
 
   /// 我的 user id（用來判斷 bubble 對齊方向）
   String _myId = '';
+  String get _draftKey {
+    final id = ref
+        .read(sharedPreferencesProvider)
+        .getString(AppConstants.prefUserId);
+    final owner = (id == null || id.isEmpty) ? 'guest' : id;
+    return 'chat_draft:$owner:${widget.chatId}';
+  }
+
   bool _loading = true;
   String? _error;
   bool _sending = false;
@@ -57,10 +66,14 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
   @override
   void initState() {
     super.initState();
-    _myId = ref.read(sharedPreferencesProvider).getString(
-              AppConstants.prefUserId,
-            ) ??
+    _ctrl.text = ref.read(sharedPreferencesProvider).getString(_draftKey) ?? '';
+    _ctrl.addListener(_saveDraft);
+    _myId =
+        ref
+            .read(sharedPreferencesProvider)
+            .getString(AppConstants.prefUserId) ??
         '';
+    if (ref.read(useMockProvider)) _myId = 'me';
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _bootstrap();
     });
@@ -68,7 +81,6 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
 
   Future<void> _bootstrap() async {
     final repo = ref.read(chatRepositoryProvider);
-    final socket = ref.read(chatSocketServiceProvider);
 
     // 1. 拉歷史訊息
     try {
@@ -91,6 +103,16 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
       return;
     }
 
+    // Demonstration conversations stay local, even if a real session is cached.
+    if (ref.read(useMockProvider)) {
+      await repo.markRead(widget.chatId);
+      if (!mounted) return;
+      ref.invalidate(chatsProvider);
+      ref.invalidate(chatUnreadTotalProvider);
+      return;
+    }
+    final socket = ref.read(chatSocketServiceProvider);
+
     // 2. 開 WebSocket（如果還沒連）
     final ok = await socket.connect();
     if (!mounted) return;
@@ -109,16 +131,16 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     _readSub = socket.reads
         .where((e) => e.chatId == widget.chatId && e.userId != _myId)
         .listen((_) {
-      if (!mounted) return;
-      setState(() {
-        for (var i = 0; i < _msgs.length; i++) {
-          final m = _msgs[i];
-          if (m.senderId == _myId && m.readAt == null) {
-            _msgs[i] = m.copyWith(readAt: DateTime.now());
-          }
-        }
-      });
-    });
+          if (!mounted) return;
+          setState(() {
+            for (var i = 0; i < _msgs.length; i++) {
+              final m = _msgs[i];
+              if (m.senderId == _myId && m.readAt == null) {
+                _msgs[i] = m.copyWith(readAt: DateTime.now());
+              }
+            }
+          });
+        });
 
     _statusSub = socket.status.listen((s) {
       if (!mounted) return;
@@ -130,8 +152,11 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     });
 
     // 4. 進房就把對方訊息標為已讀（REST 一次定生死）
-    unawaited(repo.markRead(widget.chatId));
-    socket.markRead(widget.chatId);
+    final visibleId = _latestServerMessageId();
+    if (visibleId != null) {
+      unawaited(repo.markRead(widget.chatId, upToMessageId: visibleId));
+      socket.markRead(widget.chatId, upToMessageId: visibleId);
+    }
 
     // 5. 把列表頁的 unread badge 失效
     ref.invalidate(chatsProvider);
@@ -145,9 +170,13 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
       // 取代正在 sending 的本機暫存（id 以 'pending_' 開頭）
       final pendingIdx = _msgs.indexWhere(
         (m) =>
-            m.id.startsWith('pending_') &&
-            m.senderId == msg.senderId &&
-            m.content == msg.content,
+            m.id == msg.id ||
+            (msg.clientMessageId.isNotEmpty &&
+                m.clientMessageId == msg.clientMessageId) ||
+            (m.id.startsWith('pending_') &&
+                m.senderId == msg.senderId &&
+                m.content == msg.content &&
+                m.clientMessageId.isEmpty),
       );
       if (pendingIdx != -1) {
         _msgs[pendingIdx] = msg;
@@ -160,11 +189,28 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
 
     // 若是別人傳來的，自動回 read
     if (msg.senderId != _myId) {
-      ref.read(chatSocketServiceProvider).markRead(widget.chatId);
-      unawaited(ref.read(chatRepositoryProvider).markRead(widget.chatId));
+      final visibleId = _latestServerMessageId();
+      if (visibleId != null) {
+        ref
+            .read(chatSocketServiceProvider)
+            .markRead(widget.chatId, upToMessageId: visibleId);
+        unawaited(
+          ref
+              .read(chatRepositoryProvider)
+              .markRead(widget.chatId, upToMessageId: visibleId),
+        );
+      }
       ref.invalidate(chatsProvider);
       ref.invalidate(chatUnreadTotalProvider);
     }
+  }
+
+  String? _latestServerMessageId() {
+    for (var index = _msgs.length - 1; index >= 0; index--) {
+      final id = _msgs[index].id;
+      if (!id.startsWith('pending_')) return id;
+    }
+    return null;
   }
 
   void _scrollToEnd({bool animated = true}) {
@@ -187,6 +233,7 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     _msgSub?.cancel();
     _readSub?.cancel();
     _statusSub?.cancel();
+    _ctrl.removeListener(_saveDraft);
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
@@ -197,7 +244,8 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     if (txt.isEmpty || _sending) return;
     Haptics.light();
 
-    final pendingId = 'pending_${DateTime.now().millisecondsSinceEpoch}';
+    final clientId = DateTime.now().microsecondsSinceEpoch.toString();
+    final pendingId = 'pending_$clientId';
     final pending = Message(
       id: pendingId,
       chatId: widget.chatId,
@@ -205,6 +253,7 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
       senderName: '',
       content: txt,
       createdAt: DateTime.now(),
+      clientMessageId: clientId,
     );
 
     setState(() {
@@ -214,30 +263,21 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     });
     _scrollToEnd();
 
-    final socket = ref.read(chatSocketServiceProvider);
-
     try {
-      if (socket.isConnected) {
-        // socket.io 路徑：server 會回 broadcast，_onIncomingMessage 會替換 pending
-        socket.sendMessage(chatId: widget.chatId, content: txt);
-      } else {
-        // fallback：REST
-        final saved = await ref.read(chatRepositoryProvider).send(
-              chatId: widget.chatId,
-              content: txt,
-            );
-        if (!mounted) return;
-        setState(() {
-          final idx = _msgs.indexWhere((m) => m.id == pendingId);
-          if (idx != -1 && saved != null) _msgs[idx] = saved;
-        });
-      }
+      // The API confirms persistence; its socket broadcast delivers to the peer.
+      final saved = await ref
+          .read(chatRepositoryProvider)
+          .send(chatId: widget.chatId, content: txt, clientMessageId: clientId);
+      if (!mounted) return;
+      if (saved == null) throw StateError('Message was not accepted');
+      _onIncomingMessage(saved);
       // 列表頁刷新（last_message_at）
       ref.invalidate(chatsProvider);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _msgs.removeWhere((m) => m.id == pendingId);
+        _ctrl.text = _ctrl.text.isEmpty ? txt : '$txt\n${_ctrl.text}';
       });
       AppSnackbar.error(context, '送出失敗：${_humanizeError(e)}');
     } finally {
@@ -253,6 +293,12 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     if (s.contains('403')) return '你不在這個聊天室裡';
     if (s.contains('404')) return '聊天室不存在或已關閉';
     return '伺服器錯誤，請稍後再試';
+  }
+
+  void _saveDraft() {
+    unawaited(
+      ref.read(sharedPreferencesProvider).setString(_draftKey, _ctrl.text),
+    );
   }
 
   void _onBubbleLongPress(int index) {
@@ -271,12 +317,6 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
           Navigator.pop(context);
           _ctrl.text = '回覆「${msg.content}」：';
         },
-        onReport: msg.senderId != _myId
-            ? () {
-                Navigator.pop(context);
-                AppSnackbar.warning(context, '已回報訊息');
-              }
-            : null,
       ),
     );
   }
@@ -286,7 +326,11 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     final feed = <Object>[];
     DateTime? lastDay;
     for (final m in _msgs) {
-      final day = DateTime(m.createdAt.year, m.createdAt.month, m.createdAt.day);
+      final day = DateTime(
+        m.createdAt.year,
+        m.createdAt.month,
+        m.createdAt.day,
+      );
       if (lastDay == null || day != lastDay) {
         feed.add(_DayHeader(day));
         lastDay = day;
@@ -300,24 +344,47 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
-        children: [
-          _TopBar(
-            name: widget.name.isEmpty ? '聊天室' : widget.name,
-            avatar: widget.avatar,
-            itemTitle: widget.itemTitle,
-            socketStatus: _socketStatus,
-            onBack: () => context.pop(),
-          ),
-          Expanded(
-            child: _buildBody(),
-          ),
-          _InputBar(
-            controller: _ctrl,
-            onSend: _send,
-            sending: _sending,
-          ),
-        ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxHeight < 420;
+          return Column(
+            children: [
+              _TopBar(
+                name: widget.name.isEmpty ? '聊天室' : widget.name,
+                avatar: widget.avatar,
+                itemTitle: compact ? '' : widget.itemTitle,
+                socketStatus: _socketStatus,
+                demo: ref.watch(useMockProvider),
+                onBack: () => context.pop(),
+              ),
+              if (ref.watch(useMockProvider) && !compact)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  color: AppColors.surfaceSoft,
+                  child: const Text(
+                    '示範對話 · 不會傳送給真實使用者',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              Expanded(child: _buildBody()),
+              _InputBar(
+                controller: _ctrl,
+                onSend: _send,
+                sending: _sending,
+                compact: compact,
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -379,6 +446,7 @@ class _TopBar extends StatelessWidget {
     required this.itemTitle,
     required this.socketStatus,
     required this.onBack,
+    this.demo = false,
   });
 
   final String name;
@@ -386,51 +454,47 @@ class _TopBar extends StatelessWidget {
   final String itemTitle;
   final ChatSocketStatus socketStatus;
   final VoidCallback onBack;
+  final bool demo;
 
   @override
   Widget build(BuildContext context) {
+    final online = socketStatus == ChatSocketStatus.connected;
     return Container(
       padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
       decoration: const BoxDecoration(
         color: AppColors.surface,
-        boxShadow: AppShadows.xs,
+        border: Border(bottom: BorderSide(color: AppColors.divider)),
       ),
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+            padding: const EdgeInsets.fromLTRB(6, 6, 12, 8),
             child: Row(
               children: [
                 IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+                  tooltip: '返回',
+                  icon: const Icon(Icons.arrow_back_rounded),
                   onPressed: onBack,
                 ),
+                const SizedBox(width: 2),
                 Stack(
                   children: [
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundImage: avatar.isEmpty
-                          ? null
-                          : CachedNetworkImageProvider(avatar),
-                      backgroundColor: AppColors.primary200,
-                      child: avatar.isEmpty
-                          ? const Icon(Icons.person_rounded,
-                              color: Colors.white)
-                          : null,
-                    ),
+                    ChatAvatar(name: name, url: avatar, size: 38),
                     Positioned(
                       right: 0,
                       bottom: 0,
                       child: Container(
-                        width: 12,
-                        height: 12,
+                        width: 11,
+                        height: 11,
                         decoration: BoxDecoration(
-                          color: socketStatus == ChatSocketStatus.connected
-                              ? AppColors.found
-                              : AppColors.textTertiary,
+                          color: online
+                              ? const Color(0xFF3A9D5D)
+                              : AppColors.neutral300,
                           shape: BoxShape.circle,
-                          border:
-                              Border.all(color: AppColors.surface, width: 2),
+                          border: Border.all(
+                            color: AppColors.surface,
+                            width: 2,
+                          ),
                         ),
                       ),
                     ),
@@ -451,13 +515,10 @@ class _TopBar extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        _statusLabel(socketStatus),
-                        style: TextStyle(
+                        demo ? '示範對話' : _statusLabel(socketStatus),
+                        style: const TextStyle(
                           fontSize: 11,
-                          color: socketStatus == ChatSocketStatus.connected
-                              ? AppColors.textSecondary
-                              : AppColors.textTertiary,
-                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                     ],
@@ -469,24 +530,27 @@ class _TopBar extends StatelessWidget {
           if (itemTitle.isNotEmpty)
             Container(
               margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
               decoration: BoxDecoration(
-                color: AppColors.primary50,
-                borderRadius: AppRadius.allMd,
-                border: Border.all(
-                    color: AppColors.primary100.withValues(alpha: 0.6)),
+                color: AppColors.ink50,
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.info_outline_rounded,
-                      color: AppColors.primary, size: 18),
+                  const Icon(
+                    Icons.inventory_2_outlined,
+                    color: AppColors.ink700,
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '物品：$itemTitle',
+                      '關於：$itemTitle',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 12,
-                        color: AppColors.primary700,
+                        color: AppColors.ink,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -604,51 +668,52 @@ class _Bubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 我的訊息是炭墨，對方的是白紙：和整個 App 的「兩種聲音」一致。
     return Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.only(top: 6),
       child: Row(
-        mainAxisAlignment:
-            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isMine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMine && msg.senderAvatar.isNotEmpty) ...[
-            CircleAvatar(
-              radius: 14,
-              backgroundImage: CachedNetworkImageProvider(msg.senderAvatar),
-              backgroundColor: AppColors.surfaceSoft,
-            ),
+            ChatAvatar(name: msg.senderName, url: msg.senderAvatar, size: 26),
             const SizedBox(width: 6),
           ],
           Flexible(
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.72,
+                maxWidth: MediaQuery.sizeOf(context).width * 0.72,
               ),
               child: GestureDetector(
                 onLongPress: onLongPress,
-                child: Opacity(
-                  opacity: isPending ? 0.65 : 1,
+                child: AnimatedOpacity(
+                  duration: AppMotion.of(context, AppMotion.base),
+                  opacity: isPending ? 0.6 : 1,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
-                      gradient: isMine ? AppColors.primaryGradient : null,
-                      color: isMine ? null : AppColors.surface,
+                      color: isMine ? AppColors.ink : AppColors.surface,
+                      border: isMine
+                          ? null
+                          : Border.all(color: AppColors.divider),
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(18),
                         topRight: const Radius.circular(18),
-                        bottomLeft: Radius.circular(isMine ? 18 : 4),
-                        bottomRight: Radius.circular(isMine ? 4 : 18),
+                        bottomLeft: Radius.circular(isMine ? 18 : 5),
+                        bottomRight: Radius.circular(isMine ? 5 : 18),
                       ),
-                      boxShadow: isMine ? AppShadows.primary : AppShadows.xs,
                     ),
                     child: Text(
                       msg.content,
                       style: TextStyle(
                         color: isMine ? Colors.white : AppColors.textPrimary,
-                        fontSize: 14,
+                        fontSize: 14.5,
                         height: 1.5,
-                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
@@ -715,45 +780,13 @@ class _StatusTick extends StatelessWidget {
 class _EmptyChat extends StatelessWidget {
   const _EmptyChat();
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(40),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: AppColors.primary50,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.waving_hand_rounded,
-                size: 36,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              '說聲哈囉吧 👋',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              '簡單介紹自己、確認物品的特徵與交付方式，會讓對方更願意回覆。',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12.5,
-                color: AppColors.textSecondary,
-                height: 1.5,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const SingleChildScrollView(
+    child: EmptyPanel(
+      icon: Icons.waving_hand_outlined,
+      title: '從確認物品特徵開始',
+      message: '簡單介紹自己、確認物品的特徵與交付方式，會讓對方更願意回覆。',
+    ),
+  );
 }
 
 class _ErrorRetry extends StatelessWidget {
@@ -761,36 +794,15 @@ class _ErrorRetry extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off_rounded,
-                size: 48, color: AppColors.lost),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重試'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => SingleChildScrollView(
+    child: EmptyPanel(
+      icon: Icons.cloud_off_outlined,
+      title: '訊息暫時載入不了',
+      message: message,
+      action: '重試',
+      onAction: onRetry,
+    ),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -798,14 +810,9 @@ class _ErrorRetry extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────
 
 class _BubbleActionSheet extends StatelessWidget {
-  const _BubbleActionSheet({
-    required this.onCopy,
-    required this.onReply,
-    this.onReport,
-  });
+  const _BubbleActionSheet({required this.onCopy, required this.onReply});
   final VoidCallback onCopy;
   final VoidCallback onReply;
-  final VoidCallback? onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -820,26 +827,9 @@ class _BubbleActionSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _ActionTile(
-              icon: Icons.copy_rounded,
-              label: '複製',
-              onTap: onCopy,
-            ),
+            _ActionTile(icon: Icons.copy_rounded, label: '複製', onTap: onCopy),
             _Divider(),
-            _ActionTile(
-              icon: Icons.reply_rounded,
-              label: '回覆',
-              onTap: onReply,
-            ),
-            if (onReport != null) ...[
-              _Divider(),
-              _ActionTile(
-                icon: Icons.flag_outlined,
-                label: '回報此訊息',
-                onTap: onReport!,
-                destructive: true,
-              ),
-            ],
+            _ActionTile(icon: Icons.reply_rounded, label: '回覆', onTap: onReply),
           ],
         ),
       ),
@@ -852,16 +842,14 @@ class _ActionTile extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
-    this.destructive = false,
   });
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final bool destructive;
 
   @override
   Widget build(BuildContext context) {
-    final color = destructive ? AppColors.error : AppColors.textPrimary;
+    const color = AppColors.textPrimary;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -904,10 +892,12 @@ class _InputBar extends StatefulWidget {
     required this.controller,
     required this.onSend,
     required this.sending,
+    this.compact = false,
   });
   final TextEditingController controller;
   final VoidCallback onSend;
   final bool sending;
+  final bool compact;
 
   @override
   State<_InputBar> createState() => _InputBarState();
@@ -919,6 +909,7 @@ class _InputBarState extends State<_InputBar> {
   @override
   void initState() {
     super.initState();
+    _hasText = widget.controller.text.trim().isNotEmpty;
     widget.controller.addListener(_onChange);
   }
 
@@ -953,12 +944,13 @@ class _InputBarState extends State<_InputBar> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
                 color: AppColors.surfaceSoft,
-                borderRadius: AppRadius.allRound,
+                borderRadius: BorderRadius.circular(22),
               ),
               child: TextField(
+                key: const ValueKey('chat-composer'),
                 controller: widget.controller,
                 minLines: 1,
-                maxLines: 4,
+                maxLines: widget.compact ? 1 : 4,
                 textCapitalization: TextCapitalization.sentences,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => widget.onSend(),
@@ -1010,10 +1002,8 @@ class _SendBtn extends StatelessWidget {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            gradient: enabled ? AppColors.primaryGradient : null,
-            color: enabled ? null : AppColors.surfaceSoft,
+            color: enabled ? AppColors.ink : AppColors.surfaceSoft,
             shape: BoxShape.circle,
-            boxShadow: enabled ? AppShadows.primary : null,
           ),
           child: busy
               ? const Padding(

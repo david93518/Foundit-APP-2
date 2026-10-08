@@ -5,7 +5,10 @@ class AppConstants {
   /// 切換至 true 使用本地 Mock 資料（不連後端，方便看 UI）
   /// 後端跑起來後再改回 false
   /// ▶ 預設為 false：上架版本連線到 NestJS 後端
-  static const bool useMock = false;
+  static const bool useMock = bool.fromEnvironment(
+    'USE_MOCK',
+    defaultValue: false,
+  );
 
   /// 後端 API 基底位址
   ///
@@ -31,6 +34,13 @@ class AppConstants {
   );
   static const String socketChatNamespace = '/chat';
 
+  /// 是否在登入頁提供手機驗證碼登入（後端需設定 OTP_DRIVER 簡訊供應商）。
+  /// 正式後端目前為 OTP_DRIVER=disabled，因此預設只顯示 Google 登入。
+  static const bool enablePhoneLogin = bool.fromEnvironment(
+    'PHONE_LOGIN',
+    defaultValue: false,
+  );
+
   /// 是否為 release / 上架構建（給診斷訊息用，會自動隱藏除錯資訊）
   static const bool isProduction = bool.fromEnvironment(
     'PROD',
@@ -41,11 +51,15 @@ class AppConstants {
   /// 上線版可用 --dart-define=GOOGLE_WEB_CLIENT_ID=... 覆蓋
   static const String googleWebClientId = String.fromEnvironment(
     'GOOGLE_WEB_CLIENT_ID',
-    defaultValue:
-        '992454620238-n6au0m0d8vjj6mghn6mnoeg7sbb3v9r7.apps.googleusercontent.com',
+    defaultValue: '992454620238-n6au0m0d8vjj6mghn6mnoeg7sbb3v9r7.apps.googleusercontent.com',
   );
 
-  static const String appName = '找得到';
+  static const String googleIosClientId = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+    defaultValue: '992454620238-b2g6kvo7lf06eslnqvlt3cu2gqc58ebq.apps.googleusercontent.com',
+  );
+
+  static const String appName = 'FOUND !T';
   static const String appSlogan = '失物共享平台';
 
   // 預設地圖位置（台北市中心）
@@ -77,15 +91,44 @@ class AppConstants {
   ];
 
   static const List<String> itemColors = [
-    '黑色', '白色', '灰色', '紅色', '橘色',
-    '黃色', '綠色', '藍色', '紫色', '棕色', '粉紅色', '其他',
+    '黑色',
+    '白色',
+    '灰色',
+    '紅色',
+    '橘色',
+    '黃色',
+    '綠色',
+    '藍色',
+    '紫色',
+    '棕色',
+    '粉紅色',
+    '其他',
   ];
 
   static const List<String> areas = [
     '全部地區',
-    '台北市', '新北市', '桃園市', '台中市', '台南市',
-    '高雄市', '基隆市', '新竹市', '嘉義市',
-    '宜蘭縣', '花蓮縣', '台東縣',
+    '台北市',
+    '新北市',
+    '桃園市',
+    '台中市',
+    '台南市',
+    '高雄市',
+    '基隆市',
+    '新竹市',
+    '嘉義市',
+    '新竹縣',
+    '苗栗縣',
+    '彰化縣',
+    '南投縣',
+    '雲林縣',
+    '嘉義縣',
+    '屏東縣',
+    '宜蘭縣',
+    '花蓮縣',
+    '台東縣',
+    '澎湖縣',
+    '金門縣',
+    '連江縣',
   ];
 
   // SharedPreferences keys

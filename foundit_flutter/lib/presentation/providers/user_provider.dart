@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/user.dart';
+import '../widgets/foundit_ui.dart';
 import 'core_providers.dart';
 
 /// 「我的」頁的統計卡資料；refresh: ref.invalidate(userStatsProvider)
@@ -9,9 +10,10 @@ import 'core_providers.dart';
 final userStatsProvider = FutureProvider.autoDispose<UserStats>((ref) async {
   final stats = await ref.watch(userRepositoryProvider).getStats();
   final prefs = ref.watch(sharedPreferencesProvider);
+  final prefix = 'bookmark:${savedNamespace(prefs)}:';
   final bookmarks = prefs
       .getKeys()
-      .where((k) => k.startsWith('bookmark:'))
+      .where((k) => k.startsWith(prefix))
       .where((k) => prefs.getBool(k) == true)
       .length;
   return UserStats(

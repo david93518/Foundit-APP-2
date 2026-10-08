@@ -2,143 +2,379 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../../core/utils/date_formatter.dart';
 import '../../../core/utils/haptics.dart';
 import '../../../data/models/chat.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/chat_provider.dart';
-import '../../widgets/empty_state.dart';
-import '../../widgets/skeleton_box.dart';
+import '../../providers/core_providers.dart';
+import '../../widgets/foundit_ui.dart';
 
-/// 聊天列表 — 簡潔現代的對話清單
+/// 訊息列表：每一列只放「誰、哪件物品、最後一句話」，未讀用陶土色點亮。
 class ChatListScreen extends ConsumerStatefulWidget {
   const ChatListScreen({super.key});
-
   @override
   ConsumerState<ChatListScreen> createState() => _ChatListScreenState();
 }
 
 class _ChatListScreenState extends ConsumerState<ChatListScreen> {
-  int _tab = 0;
+  bool _unreadOnly = false;
 
-  /// 0 = 全部、1 = 未讀
-  /// 「尋物 / 拾獲」tab 暫時隱藏 — 後端目前不在 chat list 帶 item.type，
-  /// 等之後 toMobileChat 補 item_type 欄位再啟用。
-  List<Chat> _filter(List<Chat> list) {
-    switch (_tab) {
-      case 1:
-        return list.where((c) => c.unreadCount > 0).toList();
-      default:
-        return list;
-    }
-  }
-
-  Future<void> _onRefresh() async {
+  Future<void> _refresh() async {
     Haptics.light();
-    ref.invalidate(chatsProvider);
-    await ref.read(chatsProvider.future);
-    if (!mounted) return;
-    AppSnackbar.success(context, '訊息已同步');
+    try {
+      ref.invalidate(chatsProvider);
+      await ref.read(chatsProvider.future);
+    } catch (_) {
+      if (mounted) AppSnackbar.info(context, '目前無法更新訊息，請稍後再試。');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(chatsProvider);
+    final isDemo = ref.watch(useMockProvider);
+    final isLoggedIn = ref.watch(authProvider).isLoggedIn;
+    final canViewChats = isDemo || isLoggedIn;
+    final chats = canViewChats ? ref.watch(chatsProvider) : null;
+    final narrow = MediaQuery.sizeOf(context).width < 650;
+    final gutter = narrow ? 20.0 : 32.0;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
-          children: [
-            const _Header(),
-            _TabBar(
-                selected: _tab, onSelect: (i) => setState(() => _tab = i)),
-            Expanded(
-              child: RefreshIndicator(
-                color: AppColors.primary,
-                backgroundColor: AppColors.surface,
-                onRefresh: _onRefresh,
-                child: async.when(
-                  loading: () => ListView.separated(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 8),
-                    itemCount: 5,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 24, color: AppColors.divider),
-                    itemBuilder: (_, __) => Row(
-                      children: [
-                        const SkeletonBox(
-                          width: 56,
-                          height: 56,
-                          radius: BorderRadius.all(Radius.circular(28)),
+        bottom: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: RefreshIndicator(
+              color: AppColors.primary,
+              onRefresh: _refresh,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.fromLTRB(gutter, 18, gutter, 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      '訊息',
+                      style: TextStyle(
+                        fontSize: 28,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -1,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isDemo ? '示範對話 · 訊息不會傳送給真實使用者。' : '確認物品特徵，約定安心的領取方式。',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    if (canViewChats) ...[
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          _FilterButton(
+                            label: '全部對話',
+                            selected: !_unreadOnly,
+                            onTap: () => setState(() => _unreadOnly = false),
+                          ),
+                          const SizedBox(width: 8),
+                          _FilterButton(
+                            label: '未讀',
+                            selected: _unreadOnly,
+                            onTap: () => setState(() => _unreadOnly = true),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    if (!canViewChats)
+                      EmptyPanel(
+                        icon: Icons.chat_bubble_outline_rounded,
+                        title: '讓好消息找到你',
+                        message: '登入後，就能與拾獲者或失主聯繫，在這裡追蹤每一則回覆。',
+                        action: '登入帳號',
+                        onAction: () => context.push('/login'),
+                      )
+                    else
+                      chats!.when(
+                        loading: () => const _ListSkeleton(),
+                        error: (_, __) => EmptyPanel(
+                          icon: Icons.wifi_off_rounded,
+                          title: '訊息暫時載入不了',
+                          message: '請確認網路連線，再試一次。你的對話會保留在這裡。',
+                          action: '重新載入',
+                          onAction: () => ref.invalidate(chatsProvider),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: const [
-                              SkeletonBox(
-                                width: double.infinity,
-                                height: 14,
+                        data: (all) {
+                          final items = _unreadOnly
+                              ? all.where((c) => c.unreadCount > 0).toList()
+                              : all;
+                          if (items.isEmpty) {
+                            return EmptyPanel(
+                              icon: _unreadOnly
+                                  ? Icons.mark_chat_read_outlined
+                                  : Icons.forum_outlined,
+                              title: _unreadOnly ? '訊息都讀完了' : '第一則對話，從物品開始',
+                              message: _unreadOnly
+                                  ? '有新的回覆時，會出現在這裡。'
+                                  : '找到可能的物品後，從物品詳情頁聯繫對方。',
+                              action: _unreadOnly ? '查看全部對話' : '去找找物品',
+                              onAction: _unreadOnly
+                                  ? () => setState(() => _unreadOnly = false)
+                                  : () => context.go('/'),
+                            );
+                          }
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: AppColors.surface,
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(color: AppColors.divider),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Column(
+                                  children: [
+                                    for (var i = 0; i < items.length; i++) ...[
+                                      if (i > 0)
+                                        const Divider(height: 1, indent: 78),
+                                      _ChatRow(chat: items[i]),
+                                    ],
+                                  ],
+                                ),
                               ),
-                              SizedBox(height: 8),
-                              SkeletonBox(width: 200, height: 12),
+                              const Padding(
+                                padding: EdgeInsets.fromLTRB(6, 18, 6, 0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.shield_outlined,
+                                      size: 15,
+                                      color: AppColors.textTertiary,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        '先核對物品特徵；請勿提供驗證碼或轉帳。',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          height: 1.6,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ],
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    button: true,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        Haptics.select();
+        onTap();
+      },
+      child: AnimatedContainer(
+        duration: AppMotion.of(context, AppMotion.base),
+        curve: AppMotion.curve,
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.ink : AppColors.surface,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? AppColors.ink : AppColors.divider,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected ? Colors.white : AppColors.textPrimary,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ChatRow extends StatelessWidget {
+  const _ChatRow({required this.chat});
+  final Chat chat;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasUnread = chat.unreadCount > 0;
+    final displayName = chat.otherUserName.isEmpty
+        ? '物品聯絡人'
+        : chat.otherUserName;
+    return InkWell(
+      onTap: () {
+        Haptics.light();
+        context.push(
+          '/chat/${chat.id}',
+          extra: {
+            'name': displayName,
+            'avatar': chat.otherUserAvatar,
+            'itemTitle': chat.itemTitle,
+          },
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ChatAvatar(name: displayName, url: chat.otherUserAvatar, size: 46),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                  error: (e, _) => ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: MediaQuery.of(context).size.height * 0.45,
-                        child: EmptyState(
-                          icon: Icons.cloud_off_rounded,
-                          title: '載入失敗',
-                          description: e.toString(),
-                          ctaLabel: '重新整理',
-                          onCta: () => ref.invalidate(chatsProvider),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        DateFormatter.relative(chat.lastMessageAt),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: hasUnread
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: hasUnread
+                              ? AppColors.primary
+                              : AppColors.textTertiary,
                         ),
                       ),
                     ],
                   ),
-                  data: (all) {
-                    final items = _filter(all);
-                    if (items.isEmpty) {
-                      return ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
-                          SizedBox(
-                            height:
-                                MediaQuery.of(context).size.height * 0.5,
-                            child: EmptyState(
-                              icon: _tab == 1
-                                  ? Icons.mark_chat_read_rounded
-                                  : Icons.chat_bubble_outline_rounded,
-                              title: _tab == 1 ? '沒有未讀訊息' : '還沒有聊天紀錄',
-                              description: _tab == 1
-                                  ? '都處理完啦！享受片刻寧靜'
-                                  : '到首頁看看有趣的物品，主動聯繫對方吧',
+                  if (chat.itemTitle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.inventory_2_outlined,
+                          size: 12,
+                          color: AppColors.textTertiary,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            chat.itemTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
                             ),
                           ),
-                        ],
-                      );
-                    }
-                    return ListView.separated(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 8),
-                      itemCount: items.length,
-                      separatorBuilder: (_, __) => const Divider(
-                          height: 24, color: AppColors.divider),
-                      itemBuilder: (_, i) => _ChatRow(chat: items[i]),
-                    );
-                  },
-                ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          chat.lastMessage.isEmpty
+                              ? '開始確認物品特徵'
+                              : chat.lastMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            height: 1.4,
+                            color: hasUnread
+                                ? AppColors.textPrimary
+                                : AppColors.textSecondary,
+                            fontWeight: hasUnread
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      if (hasUnread) ...[
+                        const SizedBox(width: 10),
+                        Container(
+                          constraints: const BoxConstraints(
+                            minWidth: 20,
+                            minHeight: 20,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            chat.unreadCount > 99
+                                ? '99+'
+                                : '${chat.unreadCount}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -148,210 +384,98 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   }
 }
 
-class _Header extends StatelessWidget {
-  const _Header();
+/// 對話頭像：有照片就顯示，沒有就用炭墨底的姓氏首字。
+class ChatAvatar extends StatelessWidget {
+  const ChatAvatar({
+    super.key,
+    required this.name,
+    required this.url,
+    this.size = 40,
+  });
+  final String name;
+  final String url;
+  final double size;
+
+  Widget _fallback() => ColoredBox(
+    color: AppColors.ink50,
+    child: Center(
+      child: Text(
+        name.isEmpty ? '?' : name.characters.first,
+        style: TextStyle(
+          fontSize: size * .4,
+          fontWeight: FontWeight.w700,
+          color: AppColors.ink,
+        ),
+      ),
+    ),
+  );
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-      child: Row(
-        children: [
-          Text('訊息', style: Theme.of(context).textTheme.displaySmall),
-          const Spacer(),
-          Material(
-            color: AppColors.surfaceSoft,
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: () {
-                Haptics.light();
-                // 想找誰聊就先去找物品 — 引導到首頁
-                context.go('/');
-                AppSnackbar.info(
-                  context,
-                  '從物品詳情頁的「聯絡」按鈕開始聊天吧',
-                );
-              },
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Icon(Icons.add_comment_outlined, size: 20),
-              ),
+  Widget build(BuildContext context) => ClipOval(
+    child: SizedBox(
+      width: size,
+      height: size,
+      child: url.isEmpty
+          ? _fallback()
+          : CachedNetworkImage(
+              imageUrl: url,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => _fallback(),
+              errorWidget: (_, __, ___) => _fallback(),
             ),
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
 }
 
-class _TabBar extends StatelessWidget {
-  const _TabBar({required this.selected, required this.onSelect});
-  final int selected;
-  final ValueChanged<int> onSelect;
-
-  static const _tabs = ['全部', '未讀'];
-
+class _ListSkeleton extends StatelessWidget {
+  const _ListSkeleton();
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceSoft,
-        borderRadius: AppRadius.allRound,
-      ),
-      child: Row(
-        children: List.generate(_tabs.length, (i) {
-          final sel = i == selected;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () {
-                Haptics.select();
-                onSelect(i);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: sel ? AppColors.surface : Colors.transparent,
-                  borderRadius: AppRadius.allRound,
-                  boxShadow: sel ? AppShadows.xs : null,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  _tabs[i],
-                  style: TextStyle(
-                    color:
-                        sel ? AppColors.primary : AppColors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-}
-
-class _ChatRow extends StatelessWidget {
-  const _ChatRow({required this.chat});
-  final Chat chat;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: AppRadius.allMd,
-      onTap: () {
-        Haptics.light();
-        context.push('/chat/${chat.id}', extra: {
-          'name': chat.otherUserName,
-          'avatar': chat.otherUserAvatar,
-          'itemTitle': chat.itemTitle,
-        });
-      },
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 28,
-            backgroundImage: chat.otherUserAvatar.isEmpty
-                ? null
-                : CachedNetworkImageProvider(chat.otherUserAvatar),
-            backgroundColor: AppColors.surfaceSoft,
-            child: chat.otherUserAvatar.isEmpty
-                ? const Icon(Icons.person_rounded,
-                    color: AppColors.textTertiary)
-                : null,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Shimmer.fromColors(
+    baseColor: AppColors.neutral100,
+    highlightColor: AppColors.neutral50,
+    period: const Duration(milliseconds: 1400),
+    child: Column(
+      children: [
+        for (var i = 0; i < 4; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        chat.otherUserName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      DateFormatter.relative(chat.lastMessageAt),
-                      style: TextStyle(
-                        color: chat.unreadCount > 0
-                            ? AppColors.primary
-                            : AppColors.textTertiary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                if (chat.itemTitle.isNotEmpty)
-                  Text(
-                    chat.itemTitle,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: const BoxDecoration(
+                    color: AppColors.neutral100,
+                    shape: BoxShape.circle,
                   ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        chat.lastMessage,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: chat.unreadCount > 0
-                              ? AppColors.textPrimary
-                              : AppColors.textSecondary,
-                          fontSize: 13,
-                          fontWeight: chat.unreadCount > 0
-                              ? FontWeight.w600
-                              : FontWeight.w400,
-                        ),
-                      ),
-                    ),
-                    if (chat.unreadCount > 0)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          gradient: AppColors.primaryGradient,
-                          borderRadius: AppRadius.allRound,
-                        ),
-                        child: Text(
-                          '${chat.unreadCount}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                  ],
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _bar(.45, 14),
+                      const SizedBox(height: 8),
+                      _bar(.8, 11),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-        ],
+      ],
+    ),
+  );
+
+  Widget _bar(double fraction, double height) => FractionallySizedBox(
+    widthFactor: fraction,
+    alignment: Alignment.centerLeft,
+    child: Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: AppColors.neutral100,
+        borderRadius: BorderRadius.circular(6),
       ),
-    );
-  }
+    ),
+  );
 }

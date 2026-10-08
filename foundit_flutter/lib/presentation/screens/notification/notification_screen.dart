@@ -31,9 +31,7 @@ class NotificationScreen extends ConsumerWidget {
               onBack: () => context.pop(),
               onReadAll: () async {
                 Haptics.light();
-                await ref
-                    .read(notificationActionsProvider)
-                    .markAllRead();
+                await ref.read(notificationActionsProvider).markAllRead();
                 if (context.mounted) {
                   AppSnackbar.success(context, '已將全部標記為已讀');
                 }
@@ -49,7 +47,9 @@ class NotificationScreen extends ConsumerWidget {
                 child: async.when(
                   loading: () => ListView.separated(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
                     itemCount: 4,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (_, __) => const SkeletonBox(
@@ -76,37 +76,42 @@ class NotificationScreen extends ConsumerWidget {
                     return AnimationLimiter(
                       child: ListView.separated(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12),
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
                         itemCount: items.length,
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(height: 10),
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
                         itemBuilder: (_, i) =>
                             AnimationConfiguration.staggeredList(
-                          position: i,
-                          duration: const Duration(milliseconds: 380),
-                          child: SlideAnimation(
-                            verticalOffset: 24,
-                            child: FadeInAnimation(
-                              child: _NotiCard(
-                                noti: items[i],
-                                onTap: () async {
-                                  Haptics.light();
-                                  if (!items[i].isRead) {
-                                    await ref
-                                        .read(notificationActionsProvider)
-                                        .markRead(items[i].id);
-                                  }
-                                  if (!context.mounted) return;
-                                  if (items[i].chatId != null) {
-                                    context.push('/chat/${items[i].chatId}');
-                                  } else if (items[i].itemId != null) {
-                                    context.push('/item/${items[i].itemId}');
-                                  }
-                                },
+                              position: i,
+                              duration: const Duration(milliseconds: 380),
+                              child: SlideAnimation(
+                                verticalOffset: 24,
+                                child: FadeInAnimation(
+                                  child: _NotiCard(
+                                    noti: items[i],
+                                    onTap: () async {
+                                      Haptics.light();
+                                      if (!items[i].isRead) {
+                                        await ref
+                                            .read(notificationActionsProvider)
+                                            .markRead(items[i].id);
+                                      }
+                                      if (!context.mounted) return;
+                                      if (items[i].chatId != null) {
+                                        context.push(
+                                          '/chat/${items[i].chatId}',
+                                        );
+                                      } else if (items[i].itemId != null) {
+                                        context.push(
+                                          '/item/${items[i].itemId}',
+                                        );
+                                      }
+                                    },
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
                       ),
                     );
                   },
@@ -121,48 +126,61 @@ class NotificationScreen extends ConsumerWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header(
-      {required this.unread, required this.onBack, required this.onReadAll});
+  const _Header({
+    required this.unread,
+    required this.onBack,
+    required this.onReadAll,
+  });
   final int unread;
   final VoidCallback onBack;
   final VoidCallback onReadAll;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-            onPressed: onBack,
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('通知', style: Theme.of(context).textTheme.displaySmall),
-                if (unread > 0)
-                  Text(
-                    '$unread 則未讀',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+    child: Row(
+      children: [
+        IconButton(
+          tooltip: '返回',
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: onBack,
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '通知',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -.5,
+                ),
+              ),
+              if (unread > 0)
+                Text(
+                  '$unread 則未讀',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w700,
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
-          TextButton(
-            onPressed: unread > 0 ? onReadAll : null,
-            child: const Text('全部已讀',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        ),
+        TextButton(
+          onPressed: unread > 0 ? onReadAll : null,
+          style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+          child: const Text(
+            '全部已讀',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
 }
 
 class _NotiCard extends StatelessWidget {
@@ -172,42 +190,35 @@ class _NotiCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final meta = _metaFor(noti.type);
+    final unread = !noti.isRead;
     return Material(
-      color: noti.isRead ? AppColors.surface : AppColors.primary50,
-      borderRadius: AppRadius.allLg,
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppRadius.allLg,
+        side: BorderSide(
+          color: unread ? AppColors.primary200 : AppColors.divider,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: AppRadius.allLg,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.allLg,
-            border: Border.all(
-              color: noti.isRead
-                  ? AppColors.divider
-                  : AppColors.primary200.withValues(alpha: 0.6),
-            ),
-            boxShadow: noti.isRead ? null : AppShadows.xs,
-          ),
+        child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  gradient: meta.gradient,
-                  borderRadius: AppRadius.allMd,
-                  boxShadow: [
-                    BoxShadow(
-                      color: meta.color.withValues(alpha: 0.3),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+                  color: unread ? AppColors.primary50 : AppColors.ink50,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(meta.icon, color: Colors.white, size: 22),
+                child: Icon(
+                  _iconFor(noti.type),
+                  color: unread ? AppColors.primary : AppColors.ink700,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -223,18 +234,23 @@ class _NotiCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 14,
-                              fontWeight: noti.isRead
-                                  ? FontWeight.w600
-                                  : FontWeight.w800,
-                              color: AppColors.textPrimary,
+                              fontWeight: unread
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
                         Text(
                           DateFormatter.relative(noti.createdAt),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
-                            color: AppColors.textTertiary,
+                            fontWeight: unread
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: unread
+                                ? AppColors.primary
+                                : AppColors.textTertiary,
                           ),
                         ),
                       ],
@@ -247,22 +263,12 @@ class _NotiCard extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.textSecondary,
-                        height: 1.4,
+                        height: 1.5,
                       ),
                     ),
                   ],
                 ),
               ),
-              if (!noti.isRead)
-                Container(
-                  margin: const EdgeInsets.only(left: 8, top: 6),
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                ),
             ],
           ),
         ),
@@ -270,39 +276,10 @@ class _NotiCard extends StatelessWidget {
     );
   }
 
-  _NotiMeta _metaFor(NotificationType t) {
-    switch (t) {
-      case NotificationType.match:
-        return _NotiMeta(
-          Icons.auto_awesome_rounded,
-          AppColors.primary,
-          AppColors.primaryGradient,
-        );
-      case NotificationType.chat:
-        return _NotiMeta(
-          Icons.chat_bubble_rounded,
-          AppColors.found,
-          AppColors.mintGradient,
-        );
-      case NotificationType.itemUpdate:
-        return _NotiMeta(
-          Icons.inventory_2_rounded,
-          AppColors.lost,
-          AppColors.sunsetGradient,
-        );
-      case NotificationType.system:
-        return _NotiMeta(
-          Icons.info_rounded,
-          AppColors.reward,
-          AppColors.rewardGradient,
-        );
-    }
-  }
-}
-
-class _NotiMeta {
-  final IconData icon;
-  final Color color;
-  final Gradient gradient;
-  const _NotiMeta(this.icon, this.color, this.gradient);
+  IconData _iconFor(NotificationType t) => switch (t) {
+    NotificationType.match => Icons.auto_awesome_outlined,
+    NotificationType.chat => Icons.chat_bubble_outline_rounded,
+    NotificationType.itemUpdate => Icons.inventory_2_outlined,
+    NotificationType.system => Icons.info_outline_rounded,
+  };
 }

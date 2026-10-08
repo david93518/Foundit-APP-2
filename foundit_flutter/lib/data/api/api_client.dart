@@ -5,6 +5,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/app_constants.dart';
 
+/// 後端錯誤格式為 `{success:false, statusCode, message}`，message 可能是字串或字串陣列。
+/// 取出可直接顯示給使用者的訊息；不是伺服器回應（例如斷線）時回傳 null。
+String? apiErrorMessage(Object? error) {
+  if (error is! DioException) return null;
+  final data = error.response?.data;
+  if (data is! Map) return null;
+  final message = data['message'];
+  if (message is String && message.trim().isNotEmpty) return message.trim();
+  if (message is List && message.isNotEmpty) {
+    return message.map((m) => m.toString()).join('、');
+  }
+  return null;
+}
+
 /// 通用 Dio 封裝；自動附帶 JWT 並統一處理錯誤。
 ///
 /// - 401 會清空本地登入資訊並透過 [onUnauthorized] 通知 UI 層
@@ -32,7 +46,10 @@ class ApiClient {
           return handler.next(options);
         },
         onError: (e, handler) async {
-          if (e.response?.statusCode == 401) {
+          if (e.response?.statusCode == 401 &&
+              e.requestOptions.headers.containsKey('Authorization') &&
+              !e.requestOptions.path.startsWith('/auth/') &&
+              e.requestOptions.path != '/users/me/delete-google') {
             await _handleUnauthorized();
           }
           return handler.next(e);

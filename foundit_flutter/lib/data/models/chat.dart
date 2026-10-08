@@ -86,6 +86,7 @@ class Message {
   final MessageType type;
   final DateTime? readAt;
   final DateTime createdAt;
+  final String clientMessageId;
 
   const Message({
     required this.id,
@@ -97,6 +98,7 @@ class Message {
     this.type = MessageType.text,
     this.readAt,
     required this.createdAt,
+    this.clientMessageId = '',
   });
 
   bool get isRead => readAt != null;
@@ -111,6 +113,7 @@ class Message {
     MessageType? type,
     DateTime? readAt,
     DateTime? createdAt,
+    String? clientMessageId,
   }) {
     return Message(
       id: id ?? this.id,
@@ -122,6 +125,7 @@ class Message {
       type: type ?? this.type,
       readAt: readAt ?? this.readAt,
       createdAt: createdAt ?? this.createdAt,
+      clientMessageId: clientMessageId ?? this.clientMessageId,
     );
   }
 
@@ -152,6 +156,11 @@ class Message {
       ),
       readAt: _tsOpt(json['read_at']),
       createdAt: _ts(json['created_at']),
+      clientMessageId: json['client_message_id']?.toString() ?? '',
     );
   }
+}
+
+extension MessageTypeWire on MessageType {
+  String get wireValue => name.toUpperCase();
 }

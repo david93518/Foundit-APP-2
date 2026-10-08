@@ -4,578 +4,477 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/core_providers.dart';
 import '../../providers/user_provider.dart';
+import '../../widgets/foundit_ui.dart';
 
-/// 個人頁
+/// 「我的」：身分卡、三個數字、兩個捷徑，其餘收進設定。
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authProvider).user;
+    final isDemo = ref.watch(useMockProvider);
     final isGuest = user == null;
-    final name = (user?.name ?? '').isNotEmpty ? user!.name : '訪客';
-    final phone = (user?.phone ?? '').isNotEmpty ? user!.phone : '尚未登入';
-    final avatar = (user?.avatarUrl ?? '').isNotEmpty ? user!.avatarUrl : '';
-    final points = user?.points ?? 0;
+    final name = isDemo
+        ? '體驗訪客'
+        : user == null
+        ? '尚未登入'
+        : user.name.isEmpty
+        ? 'FOUND !T 使用者'
+        : user.name;
+    final narrow = MediaQuery.sizeOf(context).width < 650;
+    final gutter = narrow ? 20.0 : 32.0;
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: RefreshIndicator(
-        color: AppColors.primary,
-        onRefresh: () async {
-          await ref.read(authProvider.notifier).refresh();
-          ref.invalidate(userStatsProvider);
-          await ref.read(userStatsProvider.future);
-        },
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _Header(
-                name: name,
-                phone: phone,
-                avatar: avatar,
-                points: points,
-                isGuest: isGuest,
-                onSettings: () => context.push('/settings'),
-                onEdit: () => context.push('/profile/edit'),
-                onLogin: () => context.go('/login'),
-              ),
-              const SizedBox(height: 20),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: _StatsRow(),
-              ),
-              const SizedBox(height: 28),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: _SectionTitle('功能與設定'),
-              ),
-              const SizedBox(height: 14),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: _MenuCard(isGuest: isGuest),
-              ),
-              const SizedBox(height: 20),
-              const Center(
-                child: Text(
-                  '找得到 · v1.0.0',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textTertiary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 110),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────── Header ───────────
-
-class _Header extends StatelessWidget {
-  const _Header({
-    required this.name,
-    required this.phone,
-    required this.avatar,
-    required this.points,
-    required this.isGuest,
-    required this.onSettings,
-    required this.onEdit,
-    required this.onLogin,
-  });
-
-  final String name;
-  final String phone;
-  final String avatar;
-  final int points;
-  final bool isGuest;
-  final VoidCallback onSettings;
-  final VoidCallback onEdit;
-  final VoidCallback onLogin;
-
-  @override
-  Widget build(BuildContext context) {
-    final topPad = MediaQuery.of(context).padding.top;
-
-    return Container(
-      width: double.infinity,
-      decoration: const BoxDecoration(gradient: AppColors.heroGradient),
-      padding: EdgeInsets.fromLTRB(20, topPad + 16, 20, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Text(
-                '我的',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5,
-                ),
-              ),
-              const Spacer(),
-              Material(
-                color: Colors.white24,
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: onSettings,
-                  child: const SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: Icon(Icons.settings_outlined,
-                        color: Colors.white, size: 20),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: AppRadius.allLg,
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x1A000000),
-                  blurRadius: 20,
-                  offset: Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                _Avatar(url: avatar),
-                const SizedBox(width: 14),
-                Expanded(
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: AppColors.primary,
+          onRefresh: () async {
+            if (isDemo || isGuest) return;
+            try {
+              await ref.read(authProvider.notifier).refresh();
+              ref.invalidate(userStatsProvider);
+            } catch (_) {
+              if (context.mounted) AppSnackbar.info(context, '暫時無法更新資料，請稍後再試。');
+            }
+          },
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(gutter, 18, gutter, 32),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        name,
-                        style: const TextStyle(
-                          fontSize: 18,
+                      const Text(
+                        '我的',
+                        style: TextStyle(
+                          fontSize: 28,
+                          height: 1.2,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3,
-                          color: AppColors.textPrimary,
+                          letterSpacing: -1,
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        phone,
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          color: AppColors.textSecondary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: const BoxDecoration(
-                          gradient: AppColors.rewardGradient,
-                          borderRadius: AppRadius.allRound,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.local_fire_department_rounded,
-                              color: Colors.white,
-                              size: 13,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '$points 積分',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w800,
+                      const SizedBox(height: 18),
+                      _Panel(
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  _Avatar(
+                                    url: isDemo ? '' : user?.avatarUrl ?? '',
+                                    name: name,
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Flexible(
+                                              child: Text(
+                                                name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 19,
+                                                  fontWeight: FontWeight.w800,
+                                                  letterSpacing: -.3,
+                                                ),
+                                              ),
+                                            ),
+                                            if (!isDemo &&
+                                                (user?.isVerified ??
+                                                    false)) ...[
+                                              const SizedBox(width: 5),
+                                              const Icon(
+                                                Icons.verified_rounded,
+                                                size: 17,
+                                                color: AppColors.primary,
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          isDemo
+                                              ? '資料保存在此裝置'
+                                              : isGuest
+                                              ? '登入後，管理刊登與訊息'
+                                              : '帳號已登入',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (!isDemo && !isGuest)
+                                    IconButton(
+                                      tooltip: '編輯個人資料',
+                                      onPressed: () =>
+                                          context.push('/profile/edit'),
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: AppColors.ink50,
+                                        foregroundColor: AppColors.ink,
+                                      ),
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        size: 19,
+                                      ),
+                                    ),
+                                ],
                               ),
+                              if (!isDemo && isGuest) ...[
+                                const SizedBox(height: 18),
+                                FilledButton(
+                                  onPressed: () => context.push('/login'),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: AppColors.primary,
+                                    foregroundColor: Colors.white,
+                                    minimumSize: const Size.fromHeight(48),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: const Text('登入 / 建立帳號'),
+                                ),
+                              ],
+                              if (!isGuest) ...[
+                                const SizedBox(height: 18),
+                                _StatsRow(demo: isDemo),
+                              ],
+                              if (isDemo) ...[
+                                const SizedBox(height: 14),
+                                const Text(
+                                  '目前為體驗模式，不需要提供手機或個人資料。',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    height: 1.6,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _Shortcut(
+                              icon: Icons.inventory_2_outlined,
+                              label: '我的刊登',
+                              onTap: () => context.push('/my-items'),
                             ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _Shortcut(
+                              icon: Icons.bookmark_border_rounded,
+                              label: '收藏的物品',
+                              onTap: () => context.push('/saved'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 26),
+                      const _SectionTitle('物品管理'),
+                      const SizedBox(height: 10),
+                      _Panel(
+                        child: _MenuRow(
+                          icon: Icons.qr_code_rounded,
+                          label: 'QR 防丟牌',
+                          subtitle: '新增與管理物品的專屬 QR',
+                          onTap: () => context.push('/qr'),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      const _SectionTitle('帳號與設定'),
+                      const SizedBox(height: 10),
+                      _Panel(
+                        child: Column(
+                          children: [
+                            _MenuRow(
+                              icon: Icons.settings_outlined,
+                              label: '設定',
+                              subtitle: '資料、搜尋紀錄與帳號',
+                              onTap: () => context.push('/settings'),
+                            ),
+                            if (!isDemo && !isGuest) ...[
+                              const Divider(height: 1, indent: 66),
+                              _MenuRow(
+                                icon: Icons.logout_rounded,
+                                label: '登出帳號',
+                                onTap: () async {
+                                  await ref
+                                      .read(authProvider.notifier)
+                                      .logout();
+                                  if (context.mounted) context.go('/profile');
+                                },
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                _EditButton(
-                  onTap: isGuest ? onLogin : onEdit,
-                  label: isGuest ? '登入' : null,
-                ),
-              ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 刊登／協助歸還／收藏三個數字；載入中顯示骨架，失敗就安靜地不顯示。
+class _StatsRow extends ConsumerWidget {
+  const _StatsRow({required this.demo});
+  final bool demo;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stats = ref.watch(userStatsProvider);
+    Widget tile(String label, String value) => Expanded(
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -.5,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppColors.textSecondary,
             ),
           ),
         ],
       ),
     );
+    return stats.when(
+      loading: () => Container(
+        height: 56,
+        decoration: BoxDecoration(
+          color: AppColors.surfaceSoft,
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (s) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceSoft,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            tile('刊登', '${s.posted}'),
+            tile('協助歸還', '${s.helpful}'),
+            tile('收藏', '${s.bookmarks}'),
+          ],
+        ),
+      ),
+    );
   }
+}
+
+class _Panel extends StatelessWidget {
+  const _Panel({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Material(
+    color: AppColors.surface,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+      side: const BorderSide(color: AppColors.divider),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: child,
+  );
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.url});
+  const _Avatar({required this.url, required this.name});
   final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 64,
-      height: 64,
-      padding: const EdgeInsets.all(3),
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: AppColors.primaryGradient,
-      ),
-      child: ClipOval(
-        child: Container(
-          color: AppColors.primary50,
-          alignment: Alignment.center,
-          child: url.isEmpty
-              ? const Icon(Icons.person_rounded,
-                  color: AppColors.primary, size: 30)
-              : CachedNetworkImage(
-                  imageUrl: url,
-                  fit: BoxFit.cover,
-                  width: 58,
-                  height: 58,
-                  placeholder: (_, __) => const Icon(Icons.person_rounded,
-                      color: AppColors.primary200, size: 30),
-                  errorWidget: (_, __, ___) => const Icon(
-                      Icons.person_rounded,
-                      color: AppColors.primary,
-                      size: 30),
-                ),
+  final String name;
+  Widget _fallback() => ColoredBox(
+    color: AppColors.ink50,
+    child: Center(
+      child: Text(
+        name.isEmpty ? '?' : name.characters.first,
+        style: const TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.w800,
+          color: AppColors.ink,
         ),
       ),
-    );
-  }
-}
-
-class _EditButton extends StatelessWidget {
-  const _EditButton({required this.onTap, this.label});
-  final VoidCallback onTap;
-  final String? label;
-
+    ),
+  );
   @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.primary50,
-      borderRadius: AppRadius.allRound,
-      child: InkWell(
-        borderRadius: AppRadius.allRound,
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: label == null ? 10 : 12,
-            vertical: 10,
-          ),
-          child: label != null
-              ? Text(
-                  label!,
-                  style: const TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                )
-              : const Icon(Icons.edit_rounded,
-                  color: AppColors.primary, size: 18),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ClipOval(
+    child: SizedBox(
+      width: 58,
+      height: 58,
+      child: url.isEmpty
+          ? _fallback()
+          : CachedNetworkImage(
+              imageUrl: url,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => _fallback(),
+              errorWidget: (_, __, ___) => _fallback(),
+            ),
+    ),
+  );
 }
-
-// ─────────── Section Title ───────────
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-  final String text;
-
+  const _SectionTitle(this.label);
+  final String label;
   @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 2),
+    child: Text(
+      label,
       style: const TextStyle(
-        fontSize: 17,
-        fontWeight: FontWeight.w800,
-        color: AppColors.textPrimary,
-        letterSpacing: -0.3,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textSecondary,
+        letterSpacing: .2,
       ),
-    );
-  }
+    ),
+  );
 }
 
-// ─────────── Stats ───────────
-
-class _StatsRow extends ConsumerWidget {
-  const _StatsRow();
-
+class _Shortcut extends StatelessWidget {
+  const _Shortcut({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final statsAsync = ref.watch(userStatsProvider);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16),
+  Widget build(BuildContext context) => Pressable(
+    onTap: onTap,
+    semanticLabel: label,
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-        boxShadow: AppShadows.md,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.divider),
       ),
-      child: statsAsync.when(
-        loading: () => const SizedBox(
-          height: 52,
-          child: Center(
-            child: SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-        ),
-        error: (_, __) => Row(
-          children: [
-            Expanded(child: _stat('已登記', '—', AppColors.primary)),
-            _divider(),
-            Expanded(child: _stat('幫助次數', '—', AppColors.found)),
-            _divider(),
-            Expanded(child: _stat('收藏', '—', AppColors.reward)),
-          ],
-        ),
-        data: (s) => Row(
-          children: [
-            Expanded(child: _stat('已登記', '${s.posted}', AppColors.primary)),
-            _divider(),
-            Expanded(child: _stat('幫助次數', '${s.helpful}', AppColors.found)),
-            _divider(),
-            Expanded(child: _stat('收藏', '${s.bookmarks}', AppColors.reward)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _divider() =>
-      Container(width: 1, height: 32, color: AppColors.divider);
-
-  Widget _stat(String label, String v, Color c) {
-    return Column(
-      children: [
-        Text(
-          v,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.5,
-            color: c,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11.5,
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ─────────── 選單 ───────────
-
-class _MenuCard extends ConsumerWidget {
-  const _MenuCard({required this.isGuest});
-  final bool isGuest;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-        boxShadow: AppShadows.xs,
-      ),
-      clipBehavior: Clip.antiAlias,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _MenuTile(
-            icon: Icons.qr_code_rounded,
-            color: AppColors.primary,
-            label: 'QR 防丟標籤',
-            subtitle: '為物品貼上專屬 QR',
-            onTap: () => context.push('/qr'),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.primary50,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, size: 21, color: AppColors.primary),
           ),
-          const _MenuDivider(),
-          _MenuTile(
-            icon: Icons.auto_awesome_rounded,
-            color: AppColors.primary,
-            label: 'AI 智慧配對',
-            subtitle: '圖片辨識尋找相似物品',
-            onTap: () => context.push('/ai-match'),
-          ),
-          const _MenuDivider(),
-          _MenuTile(
-            icon: Icons.card_giftcard_rounded,
-            color: AppColors.reward,
-            label: '我的積分',
-            subtitle: '達成任務換取獎勵',
-            onTap: () =>
-                AppSnackbar.info(context, '積分系統即將推出，敬請期待 ✨'),
-          ),
-          const _MenuDivider(),
-          _MenuTile(
-            icon: Icons.notifications_none_rounded,
-            color: AppColors.found,
-            label: '通知',
-            onTap: () => context.push('/notifications'),
-          ),
-          const _MenuDivider(),
-          _MenuTile(
-            icon: Icons.shield_outlined,
-            color: AppColors.primary,
-            label: '隱私與安全',
-            onTap: () => context.push('/settings'),
-          ),
-          const _MenuDivider(),
-          _MenuTile(
-            icon: Icons.help_outline_rounded,
-            color: AppColors.primary,
-            label: '幫助中心',
-            onTap: () =>
-                AppSnackbar.info(context, '說明中心即將推出，先試試各功能說明吧'),
-          ),
-          const _MenuDivider(),
-          _MenuTile(
-            icon: isGuest ? Icons.login_rounded : Icons.logout_rounded,
-            color: AppColors.error,
-            label: isGuest ? '登入 / 註冊' : '登出',
-            destructive: !isGuest,
-            onTap: () async {
-              if (isGuest) {
-                context.go('/login');
-              } else {
-                await ref.read(authProvider.notifier).logout();
-                if (context.mounted) context.go('/login');
-              }
-            },
+          const SizedBox(height: 10),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
 
-class _MenuTile extends StatelessWidget {
-  const _MenuTile({
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({
     required this.icon,
-    required this.color,
     required this.label,
     this.subtitle,
-    this.destructive = false,
     required this.onTap,
   });
-
   final IconData icon;
-  final Color color;
   final String label;
   final String? subtitle;
-  final bool destructive;
   final VoidCallback onTap;
-
   @override
-  Widget build(BuildContext context) {
-    final textColor = destructive ? AppColors.error : AppColors.textPrimary;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-          child: Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: destructive
-                      ? AppColors.error50
-                      : color.withValues(alpha: 0.1),
-                  borderRadius: AppRadius.allSm,
-                ),
-                child: Icon(
-                  icon,
-                  color: destructive ? AppColors.error : color,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle!,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (!destructive)
-                const Icon(Icons.chevron_right_rounded,
-                    color: AppColors.textTertiary),
-            ],
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.ink50,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, size: 19, color: AppColors.ink700),
           ),
-        ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: AppColors.textTertiary,
+          ),
+        ],
       ),
-    );
-  }
-}
-
-class _MenuDivider extends StatelessWidget {
-  const _MenuDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 66),
-      child: Container(height: 1, color: AppColors.divider),
-    );
-  }
+    ),
+  );
 }

@@ -5,6 +5,8 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
+import 'core/constants/app_constants.dart';
+import 'core/services/session_migration.dart';
 import 'presentation/providers/core_providers.dart';
 
 Future<void> main() async {
@@ -19,12 +21,11 @@ Future<void> main() async {
   );
 
   final prefs = await SharedPreferences.getInstance();
+  if (!AppConstants.useMock) await clearDemoSession(prefs);
 
   runApp(
     ProviderScope(
-      overrides: [
-        sharedPreferencesProvider.overrideWithValue(prefs),
-      ],
+      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
       child: const FounditApp(),
     ),
   );

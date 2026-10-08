@@ -1,648 +1,460 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
-import '../../../core/utils/app_snackbar.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
+import '../../widgets/google_account_button.dart';
 
-// SharedPreferences 中設定相關的 key（純前端持久化）
-const String _prefNotifMatch = 'pref_notif_match';
-const String _prefNotifChat = 'pref_notif_chat';
-const String _prefNotifMarketing = 'pref_notif_marketing';
-const String _prefDarkMode = 'pref_dark_mode';
-const String _prefLanguage = 'pref_language';
-
+/// Only settings backed by implemented behavior are presented as controls.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
-
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  late SharedPreferences _prefs;
-  bool _ready = false;
+  bool _busy = false;
 
-  bool _notifMatch = true;
-  bool _notifChat = true;
-  bool _notifMarketing = false;
-  bool _darkMode = false;
-  String _language = '繁體中文';
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
-  }
-
-  void _load() {
-    _prefs = ref.read(sharedPreferencesProvider);
-    setState(() {
-      _notifMatch = _prefs.getBool(_prefNotifMatch) ?? true;
-      _notifChat = _prefs.getBool(_prefNotifChat) ?? true;
-      _notifMarketing = _prefs.getBool(_prefNotifMarketing) ?? false;
-      _darkMode = _prefs.getBool(_prefDarkMode) ?? false;
-      _language = _prefs.getString(_prefLanguage) ?? '繁體中文';
-      _ready = true;
-    });
-  }
-
-  Future<void> _setBool(String key, bool v, void Function() apply) async {
-    apply();
+  Future<void> _clearSearches() async {
+    final prefs = ref.read(sharedPreferencesProvider);
+    await prefs.remove(AppConstants.prefRecentSearches);
+    if (!mounted) return;
     setState(() {});
-    await _prefs.setBool(key, v);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('此裝置的搜尋紀錄已清除。')));
   }
 
-  Future<void> _setLanguage(String lang) async {
-    setState(() => _language = lang);
-    await _prefs.setString(_prefLanguage, lang);
-    if (mounted) {
-      AppSnackbar.info(context, '語言將在下次啟動 App 時生效');
+  Future<void> _deleteAccount() async {
+    final phone = ref.read(authProvider).user?.phone ?? '';
+    if (phone.startsWith('g:') || phone.startsWith('google_')) {
+      await _deleteGoogleAccount();
+      return;
     }
-  }
-
-  Future<void> _doLogout() async {
-    final confirmed = await _confirm(
-      title: '確定登出？',
-      desc: '您將需要再次登入才能繼續使用',
-      destructive: false,
-      okText: '登出',
-    );
-    if (!confirmed) return;
-    await ref.read(authProvider.notifier).logout();
-    if (mounted) context.go('/login');
-  }
-
-  Future<void> _doDeleteAccount() async {
-    final confirmed = await _confirm(
-      title: '刪除帳號？',
-      desc: '此操作不可復原，您的所有資料將永久消失。\n（目前後端尚未開放此功能，僅會清除本機資料並登出）',
-      destructive: true,
-      okText: '我了解，刪除',
-    );
-    if (!confirmed) return;
-    await ref.read(authProvider.notifier).logout();
-    if (mounted) {
-      AppSnackbar.success(context, '已清除本機資料');
-      context.go('/login');
+    if (!phone.startsWith('09')) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('這個登入方式還沒有可用來確認刪除的手機號碼。')));
+      return;
     }
-  }
-
-  Future<bool> _confirm({
-    required String title,
-    required String desc,
-    required bool destructive,
-    required String okText,
-  }) async {
-    final v = await showDialog<bool>(
+    final send = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: const RoundedRectangleBorder(borderRadius: AppRadius.allMd),
-        title: Text(title),
-        content: Text(desc),
+      builder: (c) => AlertDialog(
+        scrollable: true,
+        title: const Text('刪除帳號'),
+        content: const Text(
+          '我們會寄送驗證碼到你的手機。確認後，刊登會從公開頁面移除，聊天訊息會匿名化，而且這個帳號不能再登入。',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () => Navigator.pop(c, false),
             child: const Text('取消'),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(
-              foregroundColor:
-                  destructive ? AppColors.error : AppColors.primary,
-            ),
-            child: Text(okText),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('寄送驗證碼'),
           ),
         ],
       ),
     );
-    return v ?? false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_ready) {
-      return const Scaffold(
-        backgroundColor: AppColors.background,
-        body: Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
+    if (send != true || !mounted) return;
+    setState(() => _busy = true);
+    final sent = await ref.read(authProvider.notifier).sendOtp(phone);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!sent) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('驗證碼沒有寄出，帳號尚未刪除。')));
+      return;
+    }
+    final code = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        scrollable: true,
+        title: const Text('輸入驗證碼'),
+        content: TextField(
+          controller: code,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(labelText: '6 位數驗證碼'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
           ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('確認刪除'),
+          ),
+        ],
+      ),
+    );
+    final otp = code.text.trim();
+    code.dispose();
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    final result = await ref.read(authRepositoryProvider).deleteAccount(otp);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!result.success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message.isEmpty ? '帳號尚未刪除。' : result.message),
         ),
       );
+      return;
     }
-    final isLoggedIn = ref.watch(authProvider).user != null;
+    await ref.read(authProvider.notifier).logout();
+    if (mounted) context.go('/profile');
+  }
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
+  Future<void> _deleteGoogleAccount() async {
+    final token = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        scrollable: true,
+        title: const Text('刪除帳號'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            _TopBar(onBack: () => context.pop()),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                children: [
-                  const _SectionTitle('通知'),
-                  _SectionCard(
-                    children: [
-                      _SwitchRow(
-                        icon: Icons.auto_awesome_rounded,
-                        title: 'AI 配對提示',
-                        desc: '有相似物品時推播通知',
-                        value: _notifMatch,
-                        onChanged: (v) => _setBool(
-                          _prefNotifMatch,
-                          v,
-                          () => _notifMatch = v,
-                        ),
-                      ),
-                      _Divider(),
-                      _SwitchRow(
-                        icon: Icons.chat_bubble_rounded,
-                        title: '聊天訊息',
-                        desc: '接收聊天推播',
-                        value: _notifChat,
-                        onChanged: (v) =>
-                            _setBool(_prefNotifChat, v, () => _notifChat = v),
-                      ),
-                      _Divider(),
-                      _SwitchRow(
-                        icon: Icons.campaign_rounded,
-                        title: '活動優惠',
-                        desc: '接收推廣訊息',
-                        value: _notifMarketing,
-                        onChanged: (v) => _setBool(
-                          _prefNotifMarketing,
-                          v,
-                          () => _notifMarketing = v,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const _SectionTitle('外觀'),
-                  _SectionCard(
-                    children: [
-                      _SwitchRow(
-                        icon: Icons.dark_mode_rounded,
-                        title: '深色模式',
-                        desc: '跟隨系統或強制開啟',
-                        value: _darkMode,
-                        onChanged: (v) {
-                          _setBool(_prefDarkMode, v, () => _darkMode = v);
-                          AppSnackbar.info(
-                              context, '深色模式將在下次啟動時套用');
-                        },
-                      ),
-                      _Divider(),
-                      _ArrowRow(
-                        icon: Icons.language_rounded,
-                        title: '語言',
-                        value: _language,
-                        onTap: _showLanguageSheet,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const _SectionTitle('帳號與安全'),
-                  _SectionCard(
-                    children: [
-                      _ArrowRow(
-                        icon: Icons.key_rounded,
-                        title: '更換手機號碼',
-                        onTap: () => AppSnackbar.info(
-                            context, '此功能即將推出，請先聯絡客服'),
-                      ),
-                      _Divider(),
-                      _ArrowRow(
-                        icon: Icons.shield_rounded,
-                        title: '隱私設定',
-                        onTap: () => AppSnackbar.info(
-                            context, '請至「編輯個人檔案 → 偏好」設定'),
-                      ),
-                      _Divider(),
-                      _ArrowRow(
-                        icon: Icons.block_rounded,
-                        title: '黑名單',
-                        onTap: () =>
-                            AppSnackbar.info(context, '黑名單功能即將推出'),
-                      ),
-                      _Divider(),
-                      _ArrowRow(
-                        icon: Icons.download_rounded,
-                        title: '下載我的資料',
-                        onTap: () =>
-                            AppSnackbar.info(context, '資料匯出功能即將推出'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const _SectionTitle('關於'),
-                  _SectionCard(
-                    children: [
-                      _ArrowRow(
-                        icon: Icons.description_rounded,
-                        title: '服務條款',
-                        onTap: () => _showLegal(
-                          title: '服務條款',
-                          body:
-                              '歡迎使用「找得到」（以下稱本服務）。\n\n'
-                              '1. 本服務協助使用者張貼與搜尋遺失或撿到的物品。\n'
-                              '2. 您應確保張貼資料真實、不侵害他人權益。\n'
-                              '3. 違反規定者，本服務有權移除內容並停權。\n'
-                              '4. 完整條款請見官方網站。',
-                        ),
-                      ),
-                      _Divider(),
-                      _ArrowRow(
-                        icon: Icons.privacy_tip_rounded,
-                        title: '隱私權政策',
-                        onTap: () => _showLegal(
-                          title: '隱私權政策',
-                          body:
-                              '我們重視您的隱私：\n\n'
-                              '• 個人資料僅用於提供「找得到」服務。\n'
-                              '• 您發布的位置只會以行政區層級公開（依您的偏好設定）。\n'
-                              '• 您可隨時於「我的 → 設定 → 下載我的資料」匯出您的紀錄。\n'
-                              '• 完整政策請見官方網站。',
-                        ),
-                      ),
-                      _Divider(),
-                      _ArrowRow(
-                        icon: Icons.info_outline_rounded,
-                        title: '版本',
-                        value: '1.0.0',
-                        onTap: () =>
-                            AppSnackbar.info(context, '您已是最新版本'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 30),
-                  if (isLoggedIn) ...[
-                    _DangerButton(
-                      label: '登出',
-                      icon: Icons.logout_rounded,
-                      onTap: _doLogout,
-                    ),
-                    const SizedBox(height: 12),
-                    _DangerButton(
-                      label: '刪除帳號',
-                      icon: Icons.delete_outline_rounded,
-                      destructive: true,
-                      onTap: _doDeleteAccount,
-                    ),
-                  ] else
-                    _DangerButton(
-                      label: '登入',
-                      icon: Icons.login_rounded,
-                      onTap: () => context.go('/login'),
-                    ),
-                ],
-              ),
+            const Text('確認後，刊登會移除、聊天內容會匿名化。請選擇原本的 Google 帳號確認刪除。'),
+            const SizedBox(height: 20),
+            GoogleAccountButton(
+              onToken: (token) async => Navigator.pop(dialogContext, token),
+              onError: (message) =>
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text(message))),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showLanguageSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _LangSheet(
-        current: _language,
-        onPick: (v) {
-          Navigator.pop(context);
-          _setLanguage(v);
-        },
-      ),
-    );
-  }
-
-  void _showLegal({required String title, required String body}) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: const RoundedRectangleBorder(borderRadius: AppRadius.allMd),
-        title: Text(title),
-        content: SingleChildScrollView(
-          child: Text(body, style: const TextStyle(height: 1.6)),
-        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('我知道了'),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
           ),
         ],
       ),
     );
+    if (token == null || !mounted) return;
+    setState(() => _busy = true);
+    final result = await ref
+        .read(authRepositoryProvider)
+        .deleteGoogleAccount(token);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!result.success) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(result.message)));
+      return;
+    }
+    await ref.read(authProvider.notifier).logout();
+    if (mounted) context.go('/profile');
   }
-}
 
-class _TopBar extends StatelessWidget {
-  const _TopBar({required this.onBack});
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-            onPressed: onBack,
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        scrollable: true,
+        title: const Text('確定登出？'),
+        content: const Text('登出後會回到登入頁，需要再次登入才能瀏覽與聯絡對方。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
           ),
-          Expanded(
-            child: Text('設定',
-                style: Theme.of(context).textTheme.displaySmall),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('登出'),
           ),
         ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(authProvider.notifier).logout();
+      if (mounted) context.go('/profile');
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('登出未完成，請稍後重試。')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
-}
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-  final String text;
+  void _dataInfo(bool mock) => showDialog<void>(
+    context: context,
+    builder: (c) => AlertDialog(
+      scrollable: true,
+      title: const Text('資料與使用說明'),
+      content: Text(
+        mock
+            ? '這是功能體驗版本。刊登、收藏和搜尋紀錄保存在此裝置；示範對話不會傳送給真實使用者。\n\n清除瀏覽器或 App 的資料，也會移除這些本機紀錄。'
+            : '刊登的照片、物品描述與地點會公開顯示，請避免填寫完整證件號碼、電話或私人住址。\n\n搜尋紀錄、收藏與未送出的訊息草稿會保存在此裝置。',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(c),
+          child: const Text('我知道了'),
+        ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 0, 8),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.5,
-          color: AppColors.textTertiary,
+    final mock = ref.watch(useMockProvider);
+    final loggedIn = ref.watch(authProvider).isLoggedIn;
+    final recent =
+        ref
+            .read(sharedPreferencesProvider)
+            .getStringList(AppConstants.prefRecentSearches) ??
+        [];
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: '返回',
+                        onPressed: () => context.canPop()
+                            ? context.pop()
+                            : context.go('/profile'),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          '設定',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+                    children: [
+                      const _Section('此裝置'),
+                      _Panel(
+                        children: [
+                          const _SettingRow(
+                            icon: Icons.language_outlined,
+                            title: '介面語言',
+                            detail: '繁體中文',
+                          ),
+                          const _SettingRow(
+                            icon: Icons.light_mode_outlined,
+                            title: '外觀',
+                            detail: '淺色介面',
+                          ),
+                          _SettingRow(
+                            icon: Icons.history_rounded,
+                            title: '清除搜尋紀錄',
+                            detail: recent.isEmpty
+                                ? '目前沒有搜尋紀錄'
+                                : '${recent.length} 筆搜尋紀錄',
+                            onTap: recent.isEmpty ? null : _clearSearches,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 26),
+                      const _Section('關於 FOUND !T'),
+                      _Panel(
+                        children: [
+                          _SettingRow(
+                            icon: Icons.info_outline_rounded,
+                            title: mock ? '體驗模式' : '帳號模式',
+                            detail: mock ? '示範資料不會傳送給其他使用者' : '透過登入帳號發布與聯絡',
+                          ),
+                          _SettingRow(
+                            icon: Icons.privacy_tip_outlined,
+                            title: '資料與使用說明',
+                            onTap: () => _dataInfo(mock),
+                          ),
+                          const _SettingRow(
+                            icon: Icons.tag_rounded,
+                            title: '版本',
+                            detail: '1.0.0',
+                          ),
+                        ],
+                      ),
+                      if (!mock && loggedIn) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _busy ? null : _deleteAccount,
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52),
+                            foregroundColor: AppColors.primary,
+                          ),
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          label: const Text('刪除帳號'),
+                        ),
+                      ],
+                      if (!mock) ...[
+                        const SizedBox(height: 28),
+                        FilledButton.icon(
+                          onPressed: _busy
+                              ? null
+                              : loggedIn
+                              ? _logout
+                              : () => context.push('/login'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 16,
+                              horizontal: 20,
+                            ),
+                          ),
+                          icon: Icon(
+                            loggedIn
+                                ? Icons.logout_rounded
+                                : Icons.login_rounded,
+                          ),
+                          label: Text(
+                            _busy
+                                ? '處理中…'
+                                : loggedIn
+                                ? '登出帳號'
+                                : '登入帳號',
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.children});
-  final List<Widget> children;
-
+class _Section extends StatelessWidget {
+  const _Section(this.title);
+  final String title;
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-        boxShadow: AppShadows.xs,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 2, bottom: 10),
+    child: Text(
+      title,
+      style: const TextStyle(
+        fontSize: 12,
+        color: AppColors.textSecondary,
+        fontWeight: FontWeight.w700,
+        letterSpacing: .2,
       ),
-      child: Column(children: children),
-    );
-  }
+    ),
+  );
 }
 
-class _SwitchRow extends StatelessWidget {
-  const _SwitchRow({
+/// 同一組設定放在一張卡裡，列與列之間只用細線。
+class _Panel extends StatelessWidget {
+  const _Panel({required this.children});
+  final List<Widget> children;
+  @override
+  Widget build(BuildContext context) => Material(
+    color: AppColors.surface,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+      side: const BorderSide(color: AppColors.divider),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      children: [
+        for (var i = 0; i < children.length; i++) ...[
+          if (i > 0) const Divider(height: 1, indent: 66),
+          children[i],
+        ],
+      ],
+    ),
+  );
+}
+
+class _SettingRow extends StatelessWidget {
+  const _SettingRow({
     required this.icon,
     required this.title,
-    this.desc,
-    required this.value,
-    required this.onChanged,
+    this.detail,
+    this.onTap,
   });
-
   final IconData icon;
   final String title;
-  final String? desc;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
+  final String? detail;
+  final VoidCallback? onTap;
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: AppColors.primary50,
-              borderRadius: AppRadius.allSm,
+              color: AppColors.ink50,
+              borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(icon, color: AppColors.primary, size: 18),
+            child: Icon(icon, size: 19, color: AppColors.ink700),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600)),
-                if (desc != null)
-                  Text(desc!,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textSecondary,
-                      )),
-              ],
-            ),
-          ),
-          Switch(
-            value: value,
-            activeColor: AppColors.primary,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ArrowRow extends StatelessWidget {
-  const _ArrowRow({
-    required this.icon,
-    required this.title,
-    this.value,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? value;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: AppColors.primary50,
-                  borderRadius: AppRadius.allSm,
-                ),
-                child: Icon(icon, color: AppColors.primary, size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(title,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600)),
-              ),
-              if (value != null) ...[
-                Text(value!,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textTertiary,
-                    )),
-                const SizedBox(width: 6),
-              ],
-              const Icon(Icons.chevron_right_rounded,
-                  color: AppColors.textTertiary),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Divider extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 14),
-      height: 1,
-      color: AppColors.divider,
-    );
-  }
-}
-
-class _DangerButton extends StatelessWidget {
-  const _DangerButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-    this.destructive = false,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool destructive;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = destructive ? AppColors.error : AppColors.textPrimary;
-    return Material(
-      color: AppColors.surface,
-      borderRadius: AppRadius.allMd,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppRadius.allMd,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.allMd,
-            border: Border.all(
-              color: destructive
-                  ? AppColors.error.withValues(alpha: 0.25)
-                  : AppColors.divider,
-              width: 1.2,
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 18),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LangSheet extends StatelessWidget {
-  const _LangSheet({required this.current, required this.onPick});
-  final String current;
-  final ValueChanged<String> onPick;
-
-  @override
-  Widget build(BuildContext context) {
-    const langs = ['繁體中文', '简体中文', 'English', '日本語'];
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-      ),
-      padding: const EdgeInsets.all(12),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: langs.map((l) {
-            final sel = l == current;
-            return Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () => onPick(l),
-                borderRadius: AppRadius.allMd,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 14),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          l,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight:
-                                sel ? FontWeight.w700 : FontWeight.w500,
-                            color: sel
-                                ? AppColors.primary
-                                : AppColors.textPrimary,
-                          ),
-                        ),
-                      ),
-                      if (sel)
-                        const Icon(Icons.check_circle_rounded,
-                            color: AppColors.primary),
-                    ],
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-            );
-          }).toList(),
-        ),
+                if (detail != null) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    detail!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (onTap != null) ...[
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ],
       ),
-    );
-  }
+    ),
+  );
 }

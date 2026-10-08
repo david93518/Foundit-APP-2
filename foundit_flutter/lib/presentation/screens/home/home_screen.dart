@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
@@ -5,936 +7,830 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
-import '../../../core/utils/app_snackbar.dart';
-import '../../../core/utils/date_formatter.dart';
-import '../../../core/utils/haptics.dart';
+import '../../../core/theme/category_icons.dart';
 import '../../../data/models/item.dart';
-import '../../../data/models/item_stats.dart';
-import '../../providers/auth_provider.dart';
+import '../../../data/repositories/item_repository.dart';
+import '../../providers/core_providers.dart';
 import '../../providers/items_provider.dart';
-import '../../providers/notifications_provider.dart';
-import '../../widgets/category_pill.dart';
-import '../../widgets/item_card.dart';
-import '../../widgets/skeleton_box.dart';
+import '../../widgets/foundit_ui.dart';
 
+/// 首頁：先問使用者「你是弄丟了，還是撿到了」，再讓物品自己說話。
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
-
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  int _selectedCategory = -1;
+  final _search = TextEditingController();
+  Timer? _debounce;
 
-  Future<void> _onRefresh() async {
-    Haptics.light();
-    ref.invalidate(itemsProvider);
-    ref.invalidate(itemStatsProvider);
-    ref.invalidate(unreadCountAsyncProvider);
-    ref.invalidate(notificationsProvider);
-    await Future.wait([
-      ref.read(currentItemsProvider.future),
-      ref.read(itemStatsProvider.future),
-      ref.read(unreadCountAsyncProvider.future),
-    ]);
-    if (!mounted) return;
-    AppSnackbar.success(context, '已更新最新動態');
-  }
+  /// null = 全部；預設顯示所有物品，避免只看單一類型時誤以為沒資料。
+  ItemType? _type;
+  String? _category;
+  String? _area;
+  String _query = '';
+  bool _recent = false;
+  int _pages = 1;
 
-  void _selectCategory(int i) {
-    Haptics.select();
-    final nextIndex = _selectedCategory == i ? -1 : i;
-    setState(() => _selectedCategory = nextIndex);
-    final category = nextIndex == -1
-        ? null
-        : AppConstants.itemCategories[nextIndex].name;
-    ref.read(itemFilterProvider.notifier).update(
-          (state) => state.copyWith(category: category),
-        );
-  }
+  static const _categories = [
+    ('全部', null),
+    ('包包', '包包/背包'),
+    ('錢包', '錢包/皮夾'),
+    ('電子產品', '電子產品'),
+    ('鑰匙', '鑰匙'),
+    ('證件', '文件/證件'),
+    ('其他', '其他'),
+  ];
 
   @override
-  Widget build(BuildContext context) {
-    final itemsAsync = ref.watch(currentItemsProvider);
-    final statsAsync = ref.watch(itemStatsProvider);
-    final unread = ref.watch(unreadCountProvider);
-    final user = ref.watch(authProvider).user;
-    final stats = statsAsync.value ?? ItemStats.empty;
-
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: RefreshIndicator(
-        color: AppColors.primary,
-        backgroundColor: AppColors.surface,
-        strokeWidth: 2.4,
-        onRefresh: _onRefresh,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics()),
-          slivers: [
-            SliverToBoxAdapter(
-              child: _HeroHeader(
-                userName: user?.name ?? '朋友',
-                userAvatar: user?.avatarUrl ?? '',
-                unreadCount: unread,
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: _CommunityBanner(
-                resolvedCount: stats.totalResolved,
-                waitingCount: stats.totalActive,
-                isLoading: statsAsync.isLoading && !statsAsync.hasValue,
-              ),
-            ),
-            const SliverToBoxAdapter(child: _QuickActions()),
-            SliverToBoxAdapter(
-              child: _SectionHeader(
-                title: '你遺失了什麼？',
-                subtitle: '點選分類快速尋找對應物品',
-                action: '全部分類',
-                onAction: () {
-                  Haptics.light();
-                  context.push('/search');
-                },
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: _CategoryRow(
-                selectedIndex: _selectedCategory,
-                onSelect: _selectCategory,
-                counts: stats.byCategory,
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xl)),
-            SliverToBoxAdapter(
-              child: _SectionHeader(
-                title: '等待主人領回 🤝',
-                subtitle: '失主正焦急等待，看你能不能幫上忙',
-                action: '看更多',
-                onAction: () {
-                  Haptics.light();
-                  context.push('/search');
-                },
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 320,
-                child: itemsAsync.when(
-                  loading: () => ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    itemCount: 3,
-                    separatorBuilder: (_, __) => const SizedBox(width: 14),
-                    itemBuilder: (_, __) =>
-                        const ItemCardSkeleton(isList: false),
-                  ),
-                  error: (e, _) => _ErrorTile(onRetry: () {
-                    ref.invalidate(itemsProvider);
-                  }),
-                  data: (items) {
-                    final featured = items
-                        .where((i) => i.status != ItemStatus.resolved)
-                        .take(4)
-                        .toList();
-                    if (featured.isEmpty) {
-                      return const _EmptyFeatured();
-                    }
-                    return ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: featured.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(width: 14),
-                      itemBuilder: (_, i) => FeaturedItemCard(
-                        item: featured[i],
-                        onTap: () {
-                          Haptics.light();
-                          context.push('/item/${featured[i].id}',
-                              extra: featured[i]);
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
-            const SliverToBoxAdapter(
-              child: _SectionHeader(
-                title: '社群最新動態',
-                subtitle: '看看大家正在如何互相幫助',
-              ),
-            ),
-            itemsAsync.when(
-              loading: () => SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                sliver: SliverList.separated(
-                  itemCount: 4,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (_, __) => const ItemCardSkeleton(),
-                ),
-              ),
-              error: (e, _) => SliverToBoxAdapter(
-                child: _ErrorTile(onRetry: () {
-                  ref.invalidate(itemsProvider);
-                }),
-              ),
-              data: (items) {
-                final recent = items.skip(2).toList();
-                return SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  sliver: SliverList.separated(
-                    itemCount: recent.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (_, i) => AnimationConfiguration.staggeredList(
-                      position: i,
-                      duration: const Duration(milliseconds: 450),
-                      child: SlideAnimation(
-                        verticalOffset: 40,
-                        child: FadeInAnimation(
-                          child: ListItemCard(
-                            item: recent[i],
-                            onTap: () {
-                              Haptics.light();
-                              context.push('/item/${recent[i].id}',
-                                  extra: recent[i]);
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 120)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorTile extends StatelessWidget {
-  const _ErrorTile({required this.onRetry});
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Row(
-        children: [
-          const Icon(Icons.cloud_off_rounded, color: AppColors.textTertiary),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text('載入失敗，請檢查網路連線',
-                style: TextStyle(color: AppColors.textSecondary)),
-          ),
-          TextButton(onPressed: onRetry, child: const Text('重試')),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyFeatured extends StatelessWidget {
-  const _EmptyFeatured();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: const BoxDecoration(
-              color: AppColors.primary50,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.emoji_emotions_outlined,
-                color: AppColors.primary, size: 32),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            '太棒了！目前沒有人有遺失物',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 15,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            '撿到東西時，第一個來通報吧 ❤',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ───────── 任務導向：4 個快速捷徑 ─────────
-
-class _QuickActions extends StatelessWidget {
-  const _QuickActions();
-
-  @override
-  Widget build(BuildContext context) {
-    final actions = <_QuickAction>[
-      _QuickAction(
-        'AI 配對',
-        Icons.auto_awesome_rounded,
-        AppColors.primaryGradient,
-        '/ai-match',
-      ),
-      _QuickAction(
-        'QR 防丟',
-        Icons.qr_code_rounded,
-        AppColors.mintGradient,
-        '/qr',
-      ),
-      _QuickAction(
-        '掃描認領',
-        Icons.qr_code_scanner_rounded,
-        AppColors.rewardGradient,
-        '/qr/scan',
-      ),
-      _QuickAction(
-        '附近物品',
-        Icons.location_on_rounded,
-        AppColors.sunsetGradient,
-        '/map',
-      ),
-    ];
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-      child: Row(
-        children: [
-          for (int i = 0; i < actions.length; i++) ...[
-            Expanded(
-              child: _QuickActionTile(
-                action: actions[i],
-                onTap: () {
-                  Haptics.light();
-                  context.push(actions[i].route);
-                },
-              ),
-            ),
-            if (i != actions.length - 1) const SizedBox(width: 10),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _QuickActionTile extends StatelessWidget {
-  const _QuickActionTile({required this.action, required this.onTap});
-  final _QuickAction action;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: AppRadius.allMd,
-        onTap: onTap,
-        child: Column(
-          children: [
-            Container(
-              height: 58,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: action.gradient,
-                borderRadius: AppRadius.allMd,
-                boxShadow: AppShadows.sm,
-              ),
-              child: Icon(action.icon, color: Colors.white, size: 26),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              action.label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.2,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickAction {
-  final String label;
-  final IconData icon;
-  final Gradient gradient;
-  final String route;
-  const _QuickAction(this.label, this.icon, this.gradient, this.route);
-}
-
-// ───────── 頂部漸層 Hero 區（含問候 + 兩顆 CTA） ─────────
-
-class _HeroHeader extends StatelessWidget {
-  const _HeroHeader({
-    required this.userName,
-    required this.userAvatar,
-    required this.unreadCount,
-  });
-  final String userName;
-  final String userAvatar;
-  final int unreadCount;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipPath(
-      clipper: _BottomCurveClipper(),
-      child: Container(
-        decoration: const BoxDecoration(gradient: AppColors.heroGradient),
-        padding: EdgeInsets.fromLTRB(
-          20,
-          MediaQuery.of(context).padding.top + 14,
-          20,
-          44,
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.18),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.4),
-                      width: 2,
-                    ),
-                    image: userAvatar.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(userAvatar),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                  ),
-                  alignment: Alignment.center,
-                  child: userAvatar.isEmpty
-                      ? const Icon(
-                          Icons.person_rounded,
-                          color: Colors.white,
-                          size: 26,
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        Greeting.forNow(name: userName),
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.85),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      const Text(
-                        '今天想找回什麼？',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _GlassIconButton(
-                  icon: Icons.notifications_none_rounded,
-                  badge: unreadCount > 0,
-                  onTap: () => context.push('/notifications'),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            const _SearchBar(),
-            const SizedBox(height: AppSpacing.lg),
-            const _HeroCtas(),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomCurveClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final p = Path();
-    p.lineTo(0, size.height - 28);
-    p.quadraticBezierTo(
-      size.width / 2,
-      size.height + 24,
-      size.width,
-      size.height - 28,
-    );
-    p.lineTo(size.width, 0);
-    p.close();
-    return p;
+  void dispose() {
+    _search.dispose();
+    _debounce?.cancel();
+    super.dispose();
   }
 
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}
-
-class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({
-    required this.icon,
-    required this.onTap,
-    this.badge = false,
-  });
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool badge;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Material(
-          color: Colors.white.withValues(alpha: 0.18),
-          borderRadius: AppRadius.allMd,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: AppRadius.allMd,
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: Icon(icon, color: Colors.white, size: 22),
-            ),
-          ),
-        ),
-        if (badge)
-          Positioned(
-            top: 10,
-            right: 10,
-            child: Container(
-              width: 8,
-              height: 8,
-              decoration: const BoxDecoration(
-                color: AppColors.lost,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(color: Color(0x66F97316), blurRadius: 6),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
+  void _clear() {
+    _search.clear();
+    _debounce?.cancel();
+    setState(() {
+      _query = '';
+      _category = null;
+      _area = null;
+      _recent = false;
+      _pages = 1;
+    });
   }
-}
 
-class _SearchBar extends StatelessWidget {
-  const _SearchBar();
+  void _searchNow() {
+    _debounce?.cancel();
+    setState(() {
+      _query = _search.text.trim();
+      _pages = 1;
+    });
+    FocusScope.of(context).unfocus();
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: AppRadius.allMd,
-      child: InkWell(
-        onTap: () => context.push('/search'),
-        borderRadius: AppRadius.allMd,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.allMd,
-            boxShadow: AppShadows.md,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          child: Row(
+  Future<void> _filters() async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      constraints: const BoxConstraints(maxWidth: 560),
+      builder: (c) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ShaderMask(
-                shaderCallback: (r) =>
-                    AppColors.primaryGradient.createShader(r),
-                child: const Icon(Icons.search_rounded,
-                    color: Colors.white, size: 22),
+              const Text(
+                '搜尋時間',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
               ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  '輸入物品名稱或地點，幫你找回家',
-                  style: TextStyle(
-                    color: AppColors.textTertiary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+              const SizedBox(height: 16),
+              for (final recent in [false, true])
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(recent ? '最近 7 天' : '不限時間'),
+                  trailing: Icon(
+                    _recent == recent
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: AppColors.primary,
                   ),
+                  onTap: () => Navigator.pop(c, recent),
                 ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.primary50,
-                  borderRadius: AppRadius.allSm,
-                ),
-                child: const Icon(Icons.tune_rounded,
-                    color: AppColors.primary, size: 18),
+              const SizedBox(height: 8),
+              const Text(
+                '依物品遺失或拾獲日期篩選。',
+                style: TextStyle(color: AppColors.textSecondary),
               ),
             ],
           ),
         ),
       ),
     );
+    if (mounted && result != null) {
+      setState(() {
+        _recent = result;
+        _pages = 1;
+      });
+    }
   }
-}
-
-/// Hero 區的兩顆主要 CTA：我遺失了 / 我撿到了
-class _HeroCtas extends StatelessWidget {
-  const _HeroCtas();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final filter = ItemFilter(
+      type: _type,
+      category: _category,
+      area: _area,
+      keyword: _query,
+      pageSize: HomeItemPages.pageSize,
+    );
+    final feed = ref.watch(
+      homeItemPagesProvider((filter: filter, pages: _pages)),
+    );
+    final width = MediaQuery.sizeOf(context).width;
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final narrow = width < 650;
+    final gutter = narrow ? 20.0 : 36.0;
+    // 內容最寬 1140，置中；超出的寬度平均留白。
+    final side = ((width - 1140) / 2).clamp(0.0, double.infinity) + gutter;
+    final columns = width < 420 && textScale > 1.5
+        ? 1
+        : narrow
+        ? 2
+        : width < 1000
+        ? 3
+        : 4;
+    final hasFilter =
+        _query.isNotEmpty || _category != null || _area != null || _recent;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return ColoredBox(
+      color: AppColors.background,
+      child: RefreshIndicator(
+        color: AppColors.primary,
+        onRefresh: () async {
+          setState(() => _pages = 1);
+          ref.invalidate(itemsProvider);
+          try {
+            await ref.read(itemsProvider(filter).future);
+          } catch (_) {
+            // The feed renders the provider's retry state after an offline refresh.
+          }
+        },
+        child: AnimationLimiter(
+          // 一次建立整頁（非惰性），列表最多幾十張卡，換來捲動時零跳動。
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(side, narrow ? 18 : 30, side, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _heading(textScale),
+                SizedBox(height: narrow ? 16 : 22),
+                _intentRow(),
+                const SizedBox(height: 16),
+                _searchRow(),
+                const SizedBox(height: 14),
+                _typeSwitch(),
+                const SizedBox(height: 12),
+                _categoryRow(textScale),
+                const SizedBox(height: 18),
+                if (hasFilter) _filterSummary(),
+                SectionHeader(
+                  switch (_type) {
+                    ItemType.found => '等主人帶回家的物品',
+                    ItemType.lost => '一起幫忙留意',
+                    null => '大家最近刊登的物品',
+                  },
+                  trailing: const Text(
+                    '最新刊登',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _results(feed, filter, hasFilter, columns, reduceMotion),
+                const SizedBox(height: 20),
+                SizedBox(width: double.infinity, child: _qrBanner()),
+                if (ref.watch(useMockProvider))
+                  const Padding(
+                    padding: EdgeInsets.only(top: 16),
+                    child: Text(
+                      '體驗模式 · 此處物品皆為示範資料',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _heading(double textScale) => LayoutBuilder(
+    builder: (_, c) {
+      const heading = Text(
+        '探索失物',
+        style: TextStyle(
+          fontSize: 28,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -1,
+          height: 1.2,
+        ),
+      );
+      final stacked = c.maxWidth < 300 * textScale;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (stacked) ...[
+            heading,
+            const SizedBox(height: 8),
+            _areaPicker(),
+          ] else
+            Row(
+              children: [
+                const Expanded(child: heading),
+                _areaPicker(),
+              ],
+            ),
+          const SizedBox(height: 4),
+          const Text(
+            '正在找的，也許就在這裡。',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+        ],
+      );
+    },
+  );
+
+  /// 兩個最重要的入口：先決定「我是哪一邊」，其餘才是瀏覽。
+  Widget _intentRow() => IntrinsicHeight(
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          child: _HeroCtaTile(
+          child: _IntentCard(
+            label: '我弄丟了東西',
+            hint: '讓附近的人幫你留意',
             icon: Icons.search_rounded,
-            label: '我遺失了',
-            sub: '建立尋物啟事',
-            gradient: const LinearGradient(
-              colors: [Color(0xFFFB923C), Color(0xFFF97316)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            onTap: () {
-              Haptics.light();
-              context.push('/add/lost');
-            },
+            color: AppColors.ink,
+            onTap: () => context.push('/add/lost'),
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: _HeroCtaTile(
-            icon: Icons.handshake_rounded,
-            label: '我撿到了',
-            sub: '通知失主領回',
-            gradient: const LinearGradient(
-              colors: [Color(0xFF34D399), Color(0xFF10B981)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            onTap: () {
-              Haptics.light();
-              context.push('/add/found');
-            },
+          child: _IntentCard(
+            label: '我撿到了東西',
+            hint: '讓失主可以找到你',
+            icon: Icons.inventory_2_outlined,
+            color: AppColors.primary,
+            onTap: () => context.push('/add/found'),
           ),
         ),
       ],
+    ),
+  );
+
+  Widget _searchRow() => Row(
+    children: [
+      Expanded(
+        child: TextField(
+          controller: _search,
+          onChanged: (s) {
+            setState(() {});
+            _debounce?.cancel();
+            _debounce = Timer(const Duration(milliseconds: 250), () {
+              if (!mounted) return;
+              setState(() {
+                _query = s.trim();
+                _pages = 1;
+              });
+            });
+          },
+          onSubmitted: (_) => _searchNow(),
+          textInputAction: TextInputAction.search,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: '搜尋物品、品牌或地點',
+            hintStyle: const TextStyle(
+              fontSize: 14,
+              color: AppColors.textTertiary,
+            ),
+            prefixIcon: const Icon(
+              Icons.search_rounded,
+              size: 22,
+              color: AppColors.textSecondary,
+            ),
+            contentPadding: const EdgeInsets.symmetric(vertical: 14),
+            fillColor: AppColors.surface,
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: AppColors.divider),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: AppColors.ink, width: 1.4),
+            ),
+            suffixIcon: _search.text.isNotEmpty
+                ? IconButton(
+                    tooltip: '清除關鍵字',
+                    onPressed: () {
+                      _debounce?.cancel();
+                      _search.clear();
+                      setState(() {
+                        _query = '';
+                        _pages = 1;
+                      });
+                    },
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                  )
+                : null,
+          ),
+        ),
+      ),
+      const SizedBox(width: 10),
+      IconButton(
+        tooltip: _recent ? '最近 7 天' : '篩選',
+        onPressed: _filters,
+        style: IconButton.styleFrom(
+          backgroundColor: _recent ? AppColors.ink : AppColors.surface,
+          foregroundColor: _recent ? Colors.white : AppColors.textPrimary,
+          minimumSize: const Size(50, 50),
+          side: BorderSide(color: _recent ? AppColors.ink : AppColors.divider),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        icon: const Icon(Icons.tune_rounded, size: 21),
+      ),
+    ],
+  );
+
+  Widget _typeSwitch() => Container(
+    decoration: BoxDecoration(
+      color: AppColors.surfaceSoft,
+      borderRadius: BorderRadius.circular(13),
+    ),
+    child: Row(
+      children: [
+        _typeTab('全部', null),
+        _typeTab('撿到的', ItemType.found),
+        _typeTab('在找的', ItemType.lost),
+      ],
+    ),
+  );
+
+  Widget _typeTab(String label, ItemType? type) {
+    final selected = type == _type;
+    return Expanded(
+      child: Semantics(
+        selected: selected,
+        button: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() {
+            _type = type;
+            _pages = 1;
+          }),
+          // 外層 48px 是觸控範圍，內層 40px 是視覺。
+          child: AnimatedContainer(
+            duration: AppMotion.of(context, AppMotion.base),
+            curve: AppMotion.curve,
+            constraints: const BoxConstraints(minHeight: 40),
+            margin: const EdgeInsets.all(4),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? AppColors.surface : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: selected
+                  ? const [
+                      BoxShadow(
+                        color: Color(0x14282B30),
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ]
+                  : const [],
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? AppColors.ink : AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
+
+  Widget _categoryRow(double textScale) => SizedBox(
+    height: 48 * (textScale > 1.3 ? textScale * .8 : 1),
+    child: ListView(
+      key: const ValueKey('home-categories'),
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
+      children: [
+        for (final (label, category) in _categories)
+          Padding(
+            key: ValueKey('category-$label'),
+            padding: const EdgeInsets.only(right: 8),
+            child: _categoryChip(label, category),
+          ),
+      ],
+    ),
+  );
+
+  Widget _categoryChip(String label, String? category) {
+    final selected = _category == category;
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() {
+          _category = category;
+          _pages = 1;
+        }),
+        // 膠囊 40px 高，上下各留 4px 讓觸控範圍達到 48px。
+        child: AnimatedContainer(
+          duration: AppMotion.of(context, AppMotion.base),
+          curve: AppMotion.curve,
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.ink : AppColors.surface,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? AppColors.ink : AppColors.divider,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                categoryIcon(category),
+                size: 16,
+                color: selected ? Colors.white : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? Colors.white : AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _filterSummary() => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            [
+              if (_query.isNotEmpty) '「$_query」',
+              if (_category != null) _category!,
+              if (_area != null) _area!,
+              if (_recent) '最近 7 天',
+            ].join(' · '),
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+        TextButton(onPressed: _clear, child: const Text('清除篩選')),
+      ],
+    ),
+  );
+
+  Widget _results(
+    HomeItemPages feed,
+    ItemFilter filter,
+    bool hasFilter,
+    int columns,
+    bool reduceMotion,
+  ) {
+    void retry() => ref.invalidate(
+      itemsProvider(filter.copyWith(page: feed.loadedPages + 1)),
+    );
+    if (feed.items.isEmpty && feed.loading) {
+      return ItemGridSkeleton(columns: columns);
+    }
+    if (feed.items.isEmpty && feed.error != null) {
+      return EmptyPanel(
+        title: '目前無法載入物品',
+        message: '請檢查網路連線後再試一次。',
+        action: '重新載入',
+        onAction: retry,
+        icon: Icons.cloud_off_outlined,
+      );
+    }
+    final cutoff = DateTime.now().subtract(const Duration(days: 7));
+    final list = feed.items
+        .where(
+          (item) =>
+              item.status == ItemStatus.active &&
+              (!_recent || item.lostAt.isAfter(cutoff)),
+        )
+        .toList();
+    if (list.isEmpty && !hasFilter && _type != null) {
+      return EmptyPanel(
+        title: _type == ItemType.found ? '目前沒有待認領的物品' : '目前沒有協尋中的物品',
+        message: '切到「全部」看看其他刊登，或按下方「＋」新增一筆。',
+        action: '查看全部',
+        onAction: () => setState(() {
+          _type = null;
+          _pages = 1;
+        }),
+      );
+    }
+    if (list.isEmpty && !hasFilter) {
+      return const EmptyPanel(
+        title: '目前還沒有刊登的物品',
+        message: '成為第一個刊登的人，按下方「＋」讓附近的人幫你留意。',
+      );
+    }
+    if (list.isEmpty) {
+      return EmptyPanel(
+        title: feed.hasMore ? '已載入的物品尚無符合結果' : '還沒有符合的物品',
+        message: feed.hasMore ? '可以繼續載入物品，或調整篩選條件。' : '試試其他關鍵字，或刊登協尋，讓更多人幫你留意。',
+        action: '清除篩選',
+        onAction: _clear,
+      );
+    }
+    final rows = <Widget>[];
+    for (var start = 0; start < list.length; start += columns) {
+      final slice = list.sublist(
+        start,
+        start + columns > list.length ? list.length : start + columns,
+      );
+      Widget row = Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < columns; i++)
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(right: i < columns - 1 ? 12 : 0),
+                    child: i < slice.length
+                        ? FoundItemCard(item: slice[i])
+                        : const SizedBox.shrink(),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+      if (!reduceMotion) {
+        row = AnimationConfiguration.staggeredList(
+          position: start ~/ columns,
+          duration: AppMotion.slow,
+          child: SlideAnimation(
+            verticalOffset: 28,
+            curve: AppMotion.curve,
+            child: FadeInAnimation(child: row),
+          ),
+        );
+      }
+      rows.add(row);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...rows,
+        Text(
+          '已顯示 ${list.length} 件',
+          style: const TextStyle(fontSize: 11, color: AppColors.textTertiary),
+        ),
+        if (feed.hasMore || feed.error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 16, bottom: 8),
+            child: Center(
+              child: Column(
+                children: [
+                  if (feed.error != null)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        '後續物品暫時載入不了，已顯示的物品仍可查看。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  OutlinedButton.icon(
+                    onPressed: feed.loading
+                        ? null
+                        : feed.error != null
+                        ? retry
+                        : () => setState(() => _pages = feed.loadedPages + 1),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.ink,
+                      minimumSize: const Size(160, 46),
+                      side: const BorderSide(color: AppColors.divider),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: feed.loading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.expand_more_rounded, size: 18),
+                    label: Text(
+                      feed.loading
+                          ? '載入中…'
+                          : feed.error != null
+                          ? '重新載入'
+                          : '載入更多',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _areaPicker() => Container(
+    padding: const EdgeInsets.only(left: 10, right: 4),
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: AppColors.divider),
+    ),
+    // 48px 高的觸控範圍；DropdownButton 預設只有文字高度。
+    child: SizedBox(
+      height: 48,
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _area ?? '全部地區',
+          itemHeight: null,
+          borderRadius: BorderRadius.circular(16),
+          dropdownColor: Colors.white,
+          icon: const Icon(
+            Icons.expand_more_rounded,
+            size: 18,
+            color: AppColors.textSecondary,
+          ),
+          style: const TextStyle(
+            fontFamily: 'NotoSansTC',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+          selectedItemBuilder: (_) => [
+            for (final a in AppConstants.areas)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.place_outlined,
+                    size: 15,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(a),
+                ],
+              ),
+          ],
+          items: AppConstants.areas
+              .map(
+                (a) => DropdownMenuItem(
+                  value: a,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(a),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (s) => setState(() {
+            _area = s == '全部地區' ? null : s;
+            _pages = 1;
+          }),
+        ),
+      ),
+    ),
+  );
+
+  Widget _qrBanner() => Pressable(
+    onTap: () => context.push('/qr'),
+    child: Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.ink,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          BracketMark(
+            size: 46,
+            color: Colors.white.withValues(alpha: .5),
+            strokeWidth: 2.4,
+            child: const Icon(
+              Icons.qr_code_2_rounded,
+              size: 24,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 16),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '給重要物品，一張防丟貼',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+                SizedBox(height: 3),
+                Text(
+                  '掃描 QR，讓拾獲者聯絡你',
+                  style: TextStyle(fontSize: 12, color: Color(0xB3FFFFFF)),
+                ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.arrow_forward_rounded,
+            size: 20,
+            color: Colors.white,
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
-class _HeroCtaTile extends StatelessWidget {
-  const _HeroCtaTile({
-    required this.icon,
+class _IntentCard extends StatelessWidget {
+  const _IntentCard({
     required this.label,
-    required this.sub,
-    required this.gradient,
+    required this.hint,
+    required this.icon,
+    required this.color,
     required this.onTap,
   });
+  final String label, hint;
   final IconData icon;
-  final String label;
-  final String sub;
-  final Gradient gradient;
+  final Color color;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppRadius.allMd,
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: gradient,
-            borderRadius: AppRadius.allMd,
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 14,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: const BoxDecoration(
-                  color: Colors.white24,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
-                      ),
-                    ),
-                    Text(
-                      sub,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ───────── 社群動態 banner ─────────
-
-class _CommunityBanner extends StatelessWidget {
-  const _CommunityBanner({
-    required this.resolvedCount,
-    required this.waitingCount,
-    this.isLoading = false,
-  });
-
-  /// 已成功歸還
-  final int resolvedCount;
-
-  /// 還在等待主人領回
-  final int waitingCount;
-
-  final bool isLoading;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+  Widget build(BuildContext context) => Pressable(
+    onTap: onTap,
+    semanticLabel: '$label，$hint',
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 13),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFFFF7ED), Color(0xFFFEF3C7)],
-        ),
-        borderRadius: AppRadius.allLg,
-        border: Border.all(color: const Color(0xFFFED7AA), width: 1),
+        color: color,
+        borderRadius: BorderRadius.circular(18),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 44,
-            height: 44,
-            decoration: const BoxDecoration(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .16),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: Colors.white, size: 19),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
               color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x22F59E0B),
-                  blurRadius: 8,
-                  offset: Offset(0, 2),
-                ),
-              ],
+              letterSpacing: -.2,
             ),
-            alignment: Alignment.center,
-            child: const Text('🏆', style: TextStyle(fontSize: 22)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      '社群已成功歸還 ',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    Text(
-                      isLoading ? '—' : '$resolvedCount',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Color(0xFFF59E0B),
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const Text(
-                      ' 件',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  isLoading
-                      ? '正在和社群同步…'
-                      : waitingCount > 0
-                          ? '目前還有 $waitingCount 件等你出手相助'
-                          : '感謝你的熱心 — 一起讓社群更有溫度',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 2),
+          Text(
+            hint,
+            maxLines: 2,
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.4,
+              color: Color(0xC7FFFFFF),
             ),
           ),
         ],
       ),
-    );
-  }
-}
-
-// ───────── 分類區 ─────────
-
-class _CategoryRow extends StatelessWidget {
-  const _CategoryRow({
-    required this.selectedIndex,
-    required this.onSelect,
-    required this.counts,
-  });
-  final int selectedIndex;
-  final Function(int) onSelect;
-  final Map<String, int> counts;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 100,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: AppConstants.itemCategories.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final meta = AppConstants.itemCategories[i];
-          return CategoryPill(
-            meta: meta,
-            selected: selectedIndex == i,
-            count: counts[meta.name] ?? 0,
-            onTap: () => onSelect(i),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ───────── 區塊標題 ─────────
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    this.subtitle,
-    this.action,
-    this.onAction,
-  });
-
-  final String title;
-  final String? subtitle;
-  final String? action;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: Theme.of(context).textTheme.headlineMedium),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(subtitle!,
-                      style: Theme.of(context).textTheme.bodySmall),
-                ],
-              ],
-            ),
-          ),
-          if (action != null)
-            TextButton(
-              onPressed: onAction,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                minimumSize: Size.zero,
-              ),
-              child: Row(
-                children: [
-                  Text(
-                    action!,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const Icon(Icons.arrow_forward_ios_rounded,
-                      size: 12, color: AppColors.primary),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
 }

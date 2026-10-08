@@ -1,479 +1,508 @@
-import 'dart:async';
-import 'dart:math' as math;
+import 'dart:ui' as ui;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/constants/app_constants.dart';
 import '../../../core/services/location_service.dart';
+import '../../../core/services/map_style_service.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
-import '../../../core/utils/app_snackbar.dart';
-import '../../../core/utils/date_formatter.dart';
-import '../../../core/utils/haptics.dart';
 import '../../../data/models/item.dart';
-import '../../../data/repositories/item_repository.dart';
 import '../../providers/items_provider.dart';
-import '../../widgets/type_badge.dart';
+import '../../widgets/foundit_ui.dart';
 
-/// 探索地圖頁 — 接 backend `/items?lat=&lng=&radius=`，搭配 GPS 與類型篩選
+/// 全螢幕地圖：篩選、筆數與「我的位置」浮在地圖上，整頁不捲動。
 class MapScreen extends ConsumerStatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({super.key, this.tileProvider});
 
+  /// 測試時注入的圖磚來源；正式版走網路圖磚。
+  final TileProvider? tileProvider;
   @override
   ConsumerState<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends ConsumerState<MapScreen> {
-  static const _defaultCenter = LatLng(
-    AppConstants.defaultLatitude,
-    AppConstants.defaultLongitude,
-  );
+const _overview = LatLng(23.7, 120.95);
+const _overviewZoom = 7.0;
 
-  late final MapController _mapController;
-  ItemType? _typeFilter; // null = 全部
+/// 臺灣本島＋澎湖；上方留給浮動篩選列，避免北部標記被蓋住。
+final _taiwanFit = CameraFit.bounds(
+  bounds: LatLngBounds(const LatLng(21.85, 119.4), const LatLng(25.35, 122.05)),
+  padding: const EdgeInsets.fromLTRB(16, 128, 16, 90),
+);
+const _lostMarker = AppColors.neutral800;
+
+class _MapScreenState extends ConsumerState<MapScreen> {
+  final _mapController = MapController();
+  ItemType? _type;
   Item? _selected;
-  LatLng? _userLocation;
+  LatLng? _myLocation;
   bool _locating = false;
+  String? _locationError;
+  bool _mapReady = false;
+  bool _userMoved = false;
+  Size? _fittedSize;
 
   @override
   void initState() {
     super.initState();
-    _mapController = MapController();
-    // 進頁面後嘗試靜默取一次 GPS（不打擾，沒拿到就停在預設）
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _locateMe(silent: true);
+      if (mounted) _locate(automatic: true);
     });
   }
 
-  ItemFilter get _filter => ItemFilter(
-        type: _typeFilter,
-        // 範圍給大一點，避免實機在台北 → 還沒移動就 0 件
-        lat: _userLocation?.latitude,
-        lng: _userLocation?.longitude,
-        radius: _userLocation == null ? null : AppConstants.nearbyRadiusKm * 6,
-        pageSize: 100,
-      );
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
 
-  Future<void> _locateMe({bool silent = false}) async {
+  Future<void> _locate({bool automatic = false}) async {
     if (_locating) return;
-    setState(() => _locating = true);
-
-    final svc = ref.read(locationServiceProvider);
-    final res = await svc.currentPosition();
-
+    setState(() {
+      _locating = true;
+      _locationError = null;
+      if (!automatic) _userMoved = false;
+    });
+    final result = await ref.read(locationServiceProvider).currentPosition();
     if (!mounted) return;
     setState(() {
       _locating = false;
-      if (res.isOk) _userLocation = res.position;
+      if (result.isOk) _myLocation = result.position;
+      if (!result.isOk) _locationError = result.message;
     });
-
-    if (res.isOk) {
-      Haptics.light();
-      _mapController.move(res.position!, 16);
-    } else if (!silent) {
-      AppSnackbar.error(context, res.message);
+    if (result.isOk && _mapReady && !_userMoved) {
+      _mapController.move(result.position!, 15);
     }
   }
 
-  /// 同一座標的多個 marker → 給予環形微小偏移，避免完全重疊
-  List<_MarkerData> _layoutMarkers(List<Item> items) {
-    final buckets = <String, List<Item>>{};
-    for (final it in items) {
-      if (it.latitude == 0 && it.longitude == 0) continue; // 過濾沒填位置的
-      final key =
-          '${it.latitude.toStringAsFixed(5)}_${it.longitude.toStringAsFixed(5)}';
-      buckets.putIfAbsent(key, () => []).add(it);
+  void _showAll(List<Item> items) {
+    setState(() => _selected = null);
+    if (items.isEmpty) {
+      _mapController.fitCamera(_taiwanFit);
+      return;
     }
+    if (items.length == 1) {
+      _mapController.move(
+        LatLng(items.first.latitude, items.first.longitude),
+        14,
+      );
+      return;
+    }
+    _mapController.fitCamera(
+      CameraFit.coordinates(
+        coordinates: [
+          for (final item in items) LatLng(item.latitude, item.longitude),
+        ],
+        padding: const EdgeInsets.fromLTRB(48, 140, 48, 120),
+        maxZoom: 15,
+      ),
+    );
+  }
 
-    final out = <_MarkerData>[];
-    buckets.forEach((_, group) {
-      if (group.length == 1) {
-        out.add(_MarkerData(group.first, LatLng(group.first.latitude, group.first.longitude)));
-        return;
-      }
-      const r = 0.00012; // ≈ 13m
-      for (var i = 0; i < group.length; i++) {
-        final ang = (2 * math.pi / group.length) * i;
-        out.add(
-          _MarkerData(
-            group[i],
-            LatLng(
-              group[i].latitude + r * math.sin(ang),
-              group[i].longitude + r * math.cos(ang),
-            ),
-          ),
-        );
+  /// 地圖尺寸改變（首次排版、旋轉、分割畫面）而使用者還沒操作時，重新套用全臺總覽，
+  /// 避免第一次排版尺寸異常時卡在最小縮放。
+  void _refitOverviewIfResized(Size size) {
+    if (!size.isFinite || size.isEmpty || size == _fittedSize) return;
+    _fittedSize = size;
+    if (!_mapReady || _userMoved || _myLocation != null || _selected != null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_userMoved && _myLocation == null) {
+        _mapController.fitCamera(_taiwanFit);
       }
     });
-    return out;
   }
+
+  bool _hasPosition(Item item) =>
+      item.latitude.isFinite &&
+      item.longitude.isFinite &&
+      item.latitude.abs() <= 90 &&
+      item.longitude.abs() <= 180 &&
+      (item.latitude != 0 || item.longitude != 0);
 
   @override
   Widget build(BuildContext context) {
-    final asyncItems = ref.watch(itemsProvider(_filter));
-
-    final items = asyncItems.maybeWhen(
-      data: (list) => list.where((i) => i.status != ItemStatus.resolved).toList(),
-      orElse: () => const <Item>[],
-    );
-    final markers = _layoutMarkers(items);
-
-    return Scaffold(
-      body: Stack(
-        children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _userLocation ?? _defaultCenter,
-              initialZoom: AppConstants.defaultZoom,
-              minZoom: 3,
-              maxZoom: 19,
-              onTap: (_, __) => setState(() => _selected = null),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.foundit',
-              ),
-              if (_userLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      width: 28,
-                      height: 28,
-                      point: _userLocation!,
-                      child: const _UserDot(),
-                    ),
-                  ],
-                ),
-              MarkerLayer(
-                markers: markers
-                    .map(
-                      (m) => Marker(
-                        width: 44,
-                        height: 56,
-                        point: m.point,
-                        alignment: Alignment.topCenter,
-                        child: GestureDetector(
-                          onTap: () {
-                            Haptics.light();
-                            setState(() => _selected = m.item);
-                            _mapController.move(
-                              LatLng(m.item.latitude, m.item.longitude),
-                              math.max(_mapController.camera.zoom, 15),
-                            );
-                          },
-                          child: _MapPin(
-                            isLost: m.item.type == ItemType.lost,
-                            selected: _selected?.id == m.item.id,
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ],
-          ),
-
-          _TopBar(
-            keyword: '',
-            onBack: () => context.pop(),
-            onSearchTap: () => context.push('/search'),
-            onLocateMe: () => _locateMe(silent: false),
-            locating: _locating,
-          ),
-
-          _FilterBar(
-            value: _typeFilter,
-            countAll: items.length,
-            countLost: items.where((i) => i.type == ItemType.lost).length,
-            countFound: items.where((i) => i.type == ItemType.found).length,
-            onChanged: (v) {
-              Haptics.select();
-              setState(() {
-                _typeFilter = v;
-                _selected = null;
-              });
-            },
-          ),
-
-          // 載入指示
-          if (asyncItems.isLoading)
-            const Positioned(
-              top: 170,
-              right: 20,
-              child: _MapPill(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.primary,
+    final result = ref.watch(mapItemsProvider(_type));
+    final items = (result.asData?.value ?? const <Item>[])
+        .where((item) => item.status == ItemStatus.active && _hasPosition(item))
+        .toList();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 700;
+        _refitOverviewIfResized(constraints.biggest);
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: _overview,
+                  initialZoom: _overviewZoom,
+                  initialCameraFit: _taiwanFit,
+                  minZoom: 5,
+                  maxZoom: 19,
+                  backgroundColor: const Color(0xFFF3F1EC),
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                   ),
+                  onMapReady: () {
+                    _mapReady = true;
+                    if (_myLocation != null && !_userMoved) {
+                      _mapController.move(_myLocation!, 15);
+                    } else if (!_userMoved) {
+                      _mapController.fitCamera(_taiwanFit);
+                    }
+                  },
+                  onPositionChanged: (_, hasGesture) {
+                    if (hasGesture) _userMoved = true;
+                  },
+                  onTap: (_, __) => setState(() => _selected = null),
                 ),
-              ),
-            ),
-
-          // 錯誤顯示
-          if (asyncItems.hasError && !asyncItems.isLoading)
-            Positioned(
-              top: 170,
-              left: 16,
-              right: 16,
-              child: _ErrorCard(
-                onRetry: () => ref.invalidate(itemsProvider(_filter)),
-              ),
-            ),
-
-          // 空狀態（已載入但 0 件）
-          if (asyncItems.hasValue && items.isEmpty && !asyncItems.isLoading)
-            const Positioned(
-              top: 180,
-              left: 16,
-              right: 16,
-              child: _EmptyHint(),
-            ),
-
-          if (_selected != null)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: _BottomPreview(
-                item: _selected!,
-                onClose: () => setState(() => _selected = null),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MarkerData {
-  final Item item;
-  final LatLng point;
-  const _MarkerData(this.item, this.point);
-}
-
-// ─────────────────────────────────────────────────────────────────
-// 子元件
-// ─────────────────────────────────────────────────────────────────
-
-class _MapPin extends StatelessWidget {
-  const _MapPin({required this.isLost, required this.selected});
-  final bool isLost;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isLost ? AppColors.lost : AppColors.found;
-    final size = selected ? 36.0 : 28.0;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      child: Stack(
-        alignment: Alignment.topCenter,
-        children: [
-          if (selected)
-            Container(
-              width: size + 18,
-              height: size + 18,
-              margin: const EdgeInsets.only(top: 4),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.18),
-                shape: BoxShape.circle,
-              ),
-            ),
-          Container(
-            width: size,
-            height: size,
-            margin: const EdgeInsets.only(top: 12),
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 3),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.4),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Icon(
-              isLost
-                  ? Icons.help_outline_rounded
-                  : Icons.check_circle_outline_rounded,
-              color: Colors.white,
-              size: selected ? 18 : 14,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _UserDot extends StatelessWidget {
-  const _UserDot();
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.22),
-            shape: BoxShape.circle,
-          ),
-        ),
-        Container(
-          width: 14,
-          height: 14,
-          decoration: BoxDecoration(
-            color: AppColors.primary,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2.5),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withValues(alpha: 0.5),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.onBack,
-    required this.onSearchTap,
-    required this.onLocateMe,
-    required this.keyword,
-    required this.locating,
-  });
-  final VoidCallback onBack;
-  final VoidCallback onSearchTap;
-  final VoidCallback onLocateMe;
-  final String keyword;
-  final bool locating;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: Row(
-            children: [
-              _Glass(icon: Icons.arrow_back_ios_new_rounded, onTap: onBack),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Material(
-                  color: Colors.white,
-                  borderRadius: AppRadius.allMd,
-                  child: InkWell(
-                    onTap: onSearchTap,
-                    borderRadius: AppRadius.allMd,
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        borderRadius: AppRadius.allMd,
-                        boxShadow: AppShadows.md,
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.search_rounded,
-                            color: AppColors.textSecondary,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            keyword.isEmpty
-                                ? '搜尋物品、地點或關鍵字'
-                                : keyword,
-                            style: TextStyle(
-                              color: keyword.isEmpty
-                                  ? AppColors.textTertiary
-                                  : AppColors.textPrimary,
-                              fontSize: 14,
+                children: [
+                  founditBaseMap(tileProvider: widget.tileProvider),
+                  MarkerLayer(
+                    markers: [
+                      for (final item in items) _marker(item),
+                      if (_myLocation != null)
+                        Marker(
+                          point: _myLocation!,
+                          key: const ValueKey('map-user-position'),
+                          width: 26,
+                          height: 26,
+                          child: Tooltip(
+                            message: '我的位置',
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2F6FDB),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 4,
+                                ),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x332F6FDB),
+                                    blurRadius: 0,
+                                    spreadRadius: 8,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // 篩選與狀態（窄螢幕自動換行）
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 12,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _FloatingCard(
+                    padding: const EdgeInsets.all(4),
+                    // 大字級的窄螢幕放不下三個按鈕時改為橫向捲動。
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final option in <(ItemType?, String)>[
+                            (null, '全部'),
+                            (ItemType.found, '待認領'),
+                            (ItemType.lost, '協尋中'),
+                          ])
+                            _FilterButton(
+                              label: option.$2,
+                              selected: _type == option.$1,
+                              dotColor: switch (option.$1) {
+                                ItemType.found => AppColors.primary,
+                                ItemType.lost => _lostMarker,
+                                null => null,
+                              },
+                              onTap: () => setState(() {
+                                _type = option.$1;
+                                _selected = null;
+                              }),
+                            ),
                         ],
                       ),
                     ),
                   ),
+                  _status(result, items),
+                ],
+              ),
+            ),
+            // 右下：顯示全部 / 我的位置
+            if (_selected == null)
+              Positioned(
+                right: 12,
+                left: 12,
+                bottom: 34,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_locationError != null) ...[
+                      _FloatingCard(
+                        key: const ValueKey('map-location-error'),
+                        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.location_off_outlined,
+                              size: 16,
+                              color: AppColors.textSecondary,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                _locationError!,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: '關閉定位提示',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () =>
+                                  setState(() => _locationError = null),
+                              icon: const Icon(Icons.close_rounded, size: 16),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (items.isNotEmpty) ...[
+                      _FloatingCard(
+                        radius: 24,
+                        child: IconButton(
+                          tooltip: '顯示全部物品',
+                          onPressed: () => _showAll(items),
+                          icon: const Icon(
+                            Icons.zoom_out_map_rounded,
+                            size: 20,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    _FloatingCard(
+                      radius: 24,
+                      child: TextButton.icon(
+                        onPressed: _locating ? null : _locate,
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          minimumSize: const Size(48, 46),
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                        ),
+                        icon: _locating
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.primary,
+                                ),
+                              )
+                            : const Icon(Icons.my_location_rounded, size: 18),
+                        label: Text(
+                          _locating ? '定位中…' : '我的位置',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              _Glass(
-                icon: locating
-                    ? Icons.gps_not_fixed_rounded
-                    : Icons.my_location_rounded,
-                loading: locating,
-                onTap: onLocateMe,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Glass extends StatelessWidget {
-  const _Glass({
-    required this.icon,
-    required this.onTap,
-    this.loading = false,
-  });
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: const CircleBorder(),
-      child: InkWell(
-        onTap: loading ? null : onTap,
-        customBorder: const CircleBorder(),
-        child: Ink(
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: AppShadows.md,
-          ),
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: loading
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: AppColors.primary,
+            // 地圖資料來源（OSM 授權要求可見）
+            Positioned(
+              left: 8,
+              bottom: 6,
+              child: InkWell(
+                onTap: () => launchUrl(Uri.parse(baseMapAttributionUrl)),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .85),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    baseMapAttribution,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: AppColors.textSecondary,
                     ),
-                  )
-                : Icon(icon, color: AppColors.textPrimary, size: 20),
+                  ),
+                ),
+              ),
+            ),
+            if (_selected != null)
+              Positioned(
+                left: 12,
+                right: wide ? null : 12,
+                bottom: 28,
+                width: wide ? 380 : null,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: constraints.maxHeight - 140,
+                  ),
+                  child: SingleChildScrollView(
+                    child: _SelectedItem(
+                      item: _selected!,
+                      onClose: () => setState(() => _selected = null),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _status(AsyncValue<List<Item>> result, List<Item> items) {
+    if (result.isLoading) {
+      return const _FloatingCard(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.primary,
+              ),
+            ),
+            SizedBox(width: 8),
+            Text('正在尋找物品…', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    if (result.hasError) {
+      return _FloatingCard(
+        padding: const EdgeInsets.fromLTRB(12, 2, 2, 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.cloud_off_outlined,
+              size: 16,
+              color: AppColors.error600,
+            ),
+            const SizedBox(width: 8),
+            const Flexible(
+              child: Text(
+                '物品暫時載入不了',
+                style: TextStyle(fontSize: 12, color: AppColors.error600),
+              ),
+            ),
+            TextButton(
+              onPressed: () => ref.invalidate(mapItemsProvider(_type)),
+              child: const Text('重試', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+    }
+    return _FloatingCard(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Text(
+        items.isEmpty ? '這裡還沒有標記' : '${items.length} 件物品已標示位置',
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    );
+  }
+
+  Marker _marker(Item item) {
+    final selected = _selected?.id == item.id;
+    final color = item.type == ItemType.found ? AppColors.primary : _lostMarker;
+    return Marker(
+      point: LatLng(item.latitude, item.longitude),
+      width: 46,
+      height: 54,
+      alignment: Alignment.topCenter,
+      child: Tooltip(
+        message: '${itemStatusLabel(item)}・${item.title}',
+        child: Semantics(
+          button: true,
+          label: '查看 ${item.title}',
+          child: GestureDetector(
+            key: ValueKey('map-item-${item.id}'),
+            onTap: () {
+              setState(() => _selected = item);
+              _mapController.move(
+                LatLng(item.latitude, item.longitude),
+                _mapController.camera.zoom < 13
+                    ? 13
+                    : _mapController.camera.zoom,
+              );
+            },
+            child: AnimatedScale(
+              scale: selected ? 1.15 : 1,
+              alignment: Alignment.bottomCenter,
+              duration: const Duration(milliseconds: 160),
+              child: Column(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 3),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x33282B30),
+                          blurRadius: 8,
+                          offset: Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      item.type == ItemType.found
+                          ? Icons.inventory_2_outlined
+                          : Icons.search_rounded,
+                      color: Colors.white,
+                      size: 19,
+                    ),
+                  ),
+                  CustomPaint(
+                    size: const Size(12, 8),
+                    painter: _PinTail(color),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -481,345 +510,191 @@ class _Glass extends StatelessWidget {
   }
 }
 
-class _FilterBar extends StatelessWidget {
-  const _FilterBar({
-    required this.value,
-    required this.countAll,
-    required this.countLost,
-    required this.countFound,
-    required this.onChanged,
-  });
-  final ItemType? value;
-  final int countAll;
-  final int countLost;
-  final int countFound;
-  final ValueChanged<ItemType?> onChanged;
+class _PinTail extends CustomPainter {
+  _PinTail(this.color);
+  final Color color;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = ui.Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
 
   @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 80,
-      left: 16,
-      right: 16,
-      child: SafeArea(
-        bottom: false,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            children: [
-              _Chip(
-                label: '全部',
-                count: countAll,
-                color: AppColors.textPrimary,
-                selected: value == null,
-                onTap: () => onChanged(null),
-              ),
-              const SizedBox(width: 8),
-              _Chip(
-                label: '遺失',
-                count: countLost,
-                color: AppColors.lost,
-                dotColor: AppColors.lost,
-                selected: value == ItemType.lost,
-                onTap: () => onChanged(ItemType.lost),
-              ),
-              const SizedBox(width: 8),
-              _Chip(
-                label: '拾獲',
-                count: countFound,
-                color: AppColors.found,
-                dotColor: AppColors.found,
-                selected: value == ItemType.found,
-                onTap: () => onChanged(ItemType.found),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  bool shouldRepaint(_PinTail old) => old.color != color;
 }
 
-class _Chip extends StatelessWidget {
-  const _Chip({
+class _FloatingCard extends StatelessWidget {
+  const _FloatingCard({
+    super.key,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+    this.radius = 14,
+  });
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final double radius;
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    elevation: 2,
+    shadowColor: const Color(0x33282B30),
+    borderRadius: BorderRadius.circular(radius),
+    child: Padding(padding: padding, child: child),
+  );
+}
+
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({
     required this.label,
-    required this.count,
-    required this.color,
     required this.selected,
     required this.onTap,
     this.dotColor,
   });
   final String label;
-  final int count;
-  final Color color;
-  final Color? dotColor;
   final bool selected;
   final VoidCallback onTap;
-
+  final Color? dotColor;
   @override
-  Widget build(BuildContext context) {
-    final bg = selected ? color : Colors.white;
-    final fg = selected ? Colors.white : AppColors.textPrimary;
-    return Material(
-      color: bg,
-      borderRadius: AppRadius.allRound,
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    button: true,
+    child: Material(
+      color: selected ? AppColors.textPrimary : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,
-        borderRadius: AppRadius.allRound,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.allRound,
-            boxShadow: AppShadows.md,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (dotColor != null) ...[
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: selected ? Colors.white : dotColor,
-                    shape: BoxShape.circle,
+        borderRadius: BorderRadius.circular(10),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (dotColor != null) ...[
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: selected ? Colors.white : dotColor,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-              ],
-              Text(
-                label,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: selected
-                      ? Colors.white.withValues(alpha: 0.25)
-                      : AppColors.neutral100,
-                  borderRadius: AppRadius.allRound,
-                ),
-                child: Text(
-                  '$count',
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
                   style: TextStyle(
-                    color: selected ? Colors.white : AppColors.textSecondary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? Colors.white : AppColors.textPrimary,
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-class _MapPill extends StatelessWidget {
-  const _MapPill({required this.child});
-  final Widget child;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: AppRadius.allRound,
-        boxShadow: AppShadows.md,
-      ),
-      child: child,
-    );
-  }
-}
-
-class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.onRetry});
-  final VoidCallback onRetry;
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: AppRadius.allLg,
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: AppRadius.allLg,
-          boxShadow: AppShadows.md,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              color: AppColors.lost,
-              size: 20,
-            ),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text(
-                '無法載入附近物品，請檢查網路或重試',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-            ),
-            TextButton(
-              onPressed: onRetry,
-              style: TextButton.styleFrom(
-                minimumSize: const Size(0, 32),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-              ),
-              child: const Text('重試'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyHint extends StatelessWidget {
-  const _EmptyHint();
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.95),
-          borderRadius: AppRadius.allLg,
-          boxShadow: AppShadows.md,
-        ),
-        child: const Row(
-          children: [
-            Icon(
-              Icons.travel_explore_rounded,
-              size: 20,
-              color: AppColors.primary,
-            ),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                '附近還沒有物品被張貼。試試切換類型，或是把你看到的東西丟上來幫助別人。',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: AppColors.textSecondary,
-                  height: 1.4,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomPreview extends StatelessWidget {
-  const _BottomPreview({required this.item, required this.onClose});
+class _SelectedItem extends StatelessWidget {
+  const _SelectedItem({required this.item, required this.onClose});
   final Item item;
   final VoidCallback onClose;
-
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        16,
-        16,
-        24 + MediaQuery.of(context).padding.bottom,
-      ),
-      child: Material(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-        child: InkWell(
-          onTap: () => context.push('/item/${item.id}', extra: item),
-          borderRadius: AppRadius.allLg,
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: AppRadius.allLg,
-              boxShadow: AppShadows.lg,
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    elevation: 4,
+    shadowColor: const Color(0x33282B30),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: () => context.push('/item/${item.id}', extra: item),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: 84,
+                height: 96,
+                child: ItemPhoto(item.images.firstOrNull),
+              ),
             ),
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: AppRadius.allMd,
-                  child: SizedBox(
-                    width: 72,
-                    height: 72,
-                    child: item.images.isEmpty
-                        ? Container(
-                            color: AppColors.neutral100,
-                            child: const Icon(
-                              Icons.image_outlined,
-                              color: AppColors.textTertiary,
-                            ),
-                          )
-                        : CachedNetworkImage(
-                            imageUrl: item.images.first,
-                            fit: BoxFit.cover,
-                            placeholder: (_, __) =>
-                                Container(color: AppColors.neutral100),
-                            errorWidget: (_, __, ___) => Container(
-                              color: AppColors.neutral100,
-                              child: const Icon(
-                                Icons.broken_image_outlined,
-                                color: AppColors.textTertiary,
-                              ),
-                            ),
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          TypeBadge(type: item.type, dense: true),
-                          const Spacer(),
-                          IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.close_rounded, size: 18),
-                            onPressed: onClose,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        item.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${item.locationName.isEmpty ? '未填寫地點' : item.locationName} · ${DateFormatter.relative(item.lostAt)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
+                      StatusTag(item),
+                      const Spacer(),
+                      SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: IconButton(
+                          tooltip: '關閉物品預覽',
+                          padding: EdgeInsets.zero,
+                          onPressed: onClose,
+                          icon: const Icon(Icons.close_rounded, size: 18),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  Text(
+                    item.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.locationName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Row(
+                    children: [
+                      Text(
+                        '查看詳情',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward_rounded,
+                        size: 14,
+                        color: AppColors.primary,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }

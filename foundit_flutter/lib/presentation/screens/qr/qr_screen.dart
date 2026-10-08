@@ -5,604 +5,744 @@ import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../../data/models/qr_item.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/qr_provider.dart';
-import '../../widgets/gradient_button.dart';
 
-/// QR 防丟標籤頁 — 接後端 `/qr/items`、`/qr/generate`、`/qr/items/:id`
 class QrScreen extends ConsumerStatefulWidget {
   const QrScreen({super.key});
-
   @override
   ConsumerState<QrScreen> createState() => _QrScreenState();
 }
 
 class _QrScreenState extends ConsumerState<QrScreen> {
-  int _tab = 0;
+  String? _selectedId;
+  final Set<String> _deletingIds = {};
+
+  Future<void> _refresh() async {
+    try {
+      ref.invalidate(myQrItemsProvider);
+      await ref.read(myQrItemsProvider.future);
+    } catch (_) {
+      if (mounted) AppSnackbar.error(context, '防丟牌暫時無法更新，請稍後再試。');
+    }
+  }
+
+  Future<void> _create(bool isDemo) async {
+    final created = await showModalBottomSheet<QrItemModel>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: AppColors.background,
+      constraints: const BoxConstraints(maxWidth: 720),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => _CreateTagSheet(isDemo: isDemo),
+    );
+    if (!mounted || created == null) return;
+    setState(() => _selectedId = created.id);
+    ref.invalidate(myQrItemsProvider);
+    AppSnackbar.success(context, isDemo ? '已新增示範防丟牌' : '防丟牌已建立');
+  }
+
+  Future<void> _remove(QrItemModel tag, bool isDemo) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('移除這張防丟牌？'),
+        content: Text(
+          isDemo
+              ? '將移除「${tag.name}」的示範紀錄。'
+              : '移除「${tag.name}」後，原本的 QR 將無法再辨識這件物品。此操作無法復原。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('保留'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('移除防丟牌'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deletingIds.add(tag.id));
+    try {
+      await ref.read(qrRepositoryProvider).remove(tag.id);
+      ref.invalidate(myQrItemsProvider);
+      if (mounted) {
+        if (_selectedId == tag.id) setState(() => _selectedId = null);
+        AppSnackbar.success(context, '已移除防丟牌');
+      }
+    } catch (_) {
+      if (mounted) AppSnackbar.error(context, '未能移除，請稍後再試。');
+    } finally {
+      if (mounted) setState(() => _deletingIds.remove(tag.id));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isDemo = ref.watch(useMockProvider);
+    final canManage = isDemo || ref.watch(authProvider).isLoggedIn;
+    final itemsAsync = canManage ? ref.watch(myQrItemsProvider) : null;
     return Scaffold(
       backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.background,
+        surfaceTintColor: Colors.transparent,
+        title: const Text(
+          'QR 防丟牌',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+        ),
+        leading: IconButton(
+          tooltip: '返回',
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/home'),
+        ),
+        actions: [
+          if (canManage && !isDemo)
+            IconButton(
+              tooltip: '掃描防丟牌',
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              onPressed: () => context.push('/qr/scan'),
+            ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
-        child: Column(
-          children: [
-            _Header(onBack: () => context.pop()),
-            _TabRow(selected: _tab, onTap: (i) => setState(() => _tab = i)),
-            Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 240),
-                child: _tab == 0 ? const _MyTags() : const _HowItWorks(),
+        top: false,
+        child: RefreshIndicator(
+          onRefresh: canManage ? _refresh : () async {},
+          color: AppColors.primary,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        '讓重逢，多一個可能',
+                        style: TextStyle(
+                          fontSize: 12,
+                          letterSpacing: 1,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        '為重要的物品，\n留一條回家的路。',
+                        style: TextStyle(
+                          fontSize: 32,
+                          height: 1.35,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        '替隨身物品建立專屬 QR，\n把容易忘記的小東西，好好放在心上。',
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.7,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      if (isDemo) ...[
+                        const _Notice(
+                          icon: Icons.visibility_outlined,
+                          title: '示範 QR，尚未連結公開認領服務',
+                          description: '可體驗新增、切換與移除。示範資料只在本次執行保留，請勿用於實際防丟。',
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+                      if (!canManage)
+                        _EmptyCard(
+                          title: '登入後，管理你的防丟牌',
+                          description: '每張防丟牌都需要綁定帳號，\n讓你能隨時查看與管理。',
+                          actionLabel: '登入帳號',
+                          onAction: () => context.push('/login'),
+                        )
+                      else
+                        itemsAsync!.when(
+                          loading: () => const Padding(
+                            padding: EdgeInsets.all(56),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: AppColors.primary,
+                                strokeWidth: 2,
+                              ),
+                            ),
+                          ),
+                          error: (_, __) => _EmptyCard(
+                            title: '防丟牌暫時載入不了',
+                            description: '請確認網路連線，再試一次。',
+                            actionLabel: '重新載入',
+                            onAction: () => ref.invalidate(myQrItemsProvider),
+                          ),
+                          data: (items) {
+                            if (items.isEmpty) {
+                              return _EmptyCard(
+                                title: '從一件重要的小物開始',
+                                description: '鑰匙、背包、雨傘⋯\n替常帶出門的物品，建立第一張防丟牌。',
+                                actionLabel: isDemo ? '新增示範防丟牌' : '新增防丟牌',
+                                onAction: () => _create(isDemo),
+                              );
+                            }
+                            final selected =
+                                items
+                                    .where((item) => item.id == _selectedId)
+                                    .firstOrNull ??
+                                items.first;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _QrPreview(tag: selected, isDemo: isDemo),
+                                const SizedBox(height: 28),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '我的防丟牌 · ${items.length}',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    TextButton.icon(
+                                      onPressed: () => _create(isDemo),
+                                      icon: const Icon(
+                                        Icons.add_rounded,
+                                        size: 19,
+                                      ),
+                                      label: const Text('新增'),
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: AppColors.primary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                for (final tag in items) ...[
+                                  _TagRow(
+                                    tag: tag,
+                                    selected: tag.id == selected.id,
+                                    busy: _deletingIds.contains(tag.id),
+                                    onSelect: () =>
+                                        setState(() => _selectedId = tag.id),
+                                    onDelete: () => _remove(tag, isDemo),
+                                  ),
+                                  const SizedBox(height: 10),
+                                ],
+                              ],
+                            );
+                          },
+                        ),
+                      const SizedBox(height: 28),
+                      const _Notice(
+                        icon: Icons.info_outline_rounded,
+                        title: '簡單命名，就夠了',
+                        description: '名稱與備註可能出現在掃描結果中。只填物品特徵，不需要留下地址、電話或驗證碼。',
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _OutlineBtn(
-                      icon: Icons.qr_code_scanner_rounded,
-                      label: '掃描 QR',
-                      onTap: () => context.push('/qr/scan'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: GradientButton(
-                      label: '建立標籤',
-                      icon: Icons.add_rounded,
-                      onPressed: () => _showCreateSheet(context),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
-
-  void _showCreateSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const _CreateTagSheet(),
-    );
-  }
 }
 
-class _Header extends StatelessWidget {
-  const _Header({required this.onBack});
-  final VoidCallback onBack;
+class _QrPreview extends StatelessWidget {
+  const _QrPreview({required this.tag, required this.isDemo});
+  final QrItemModel tag;
+  final bool isDemo;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
-      child: Row(
+    // A demo encodes a readable disclaimer, never the mock repository's localhost URL.
+    final data = isDemo ? 'FOUND !T：示範 QR，尚未連結公開認領服務。' : tag.qrCode;
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-            onPressed: onBack,
-          ),
-          Expanded(
-            child: Text(
-              'QR 防丟標籤',
-              style: Theme.of(context).textTheme.displaySmall,
+          Text(
+            isDemo ? '示範防丟牌' : '我的專屬防丟牌',
+            style: const TextStyle(
+              fontSize: 12,
+              letterSpacing: 1,
+              color: AppColors.textSecondary,
             ),
           ),
+          const SizedBox(height: 12),
+          Text(
+            tag.name,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 23,
+              height: 1.4,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 24),
+          if (data.trim().isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                '這張防丟牌尚未提供 QR 內容。',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 216),
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: QrImageView(
+                    data: data,
+                    version: QrVersions.auto,
+                    padding: const EdgeInsets.all(8),
+                    backgroundColor: Colors.white,
+                    eyeStyle: const QrEyeStyle(
+                      eyeShape: QrEyeShape.square,
+                      color: AppColors.textPrimary,
+                    ),
+                    dataModuleStyle: const QrDataModuleStyle(
+                      dataModuleShape: QrDataModuleShape.square,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(height: 22),
+          Text(
+            isDemo ? '僅供介面體驗，無法聯絡物主。' : '請先使用 FOUND !T 的掃描功能，\n確認可辨識這張防丟牌。',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 14,
+              height: 1.6,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          if (tag.description.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              tag.description,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.6,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _TabRow extends StatelessWidget {
-  const _TabRow({required this.selected, required this.onTap});
-  final int selected;
-  final ValueChanged<int> onTap;
-
+class _TagRow extends StatelessWidget {
+  const _TagRow({
+    required this.tag,
+    required this.selected,
+    required this.busy,
+    required this.onSelect,
+    required this.onDelete,
+  });
+  final QrItemModel tag;
+  final bool selected;
+  final bool busy;
+  final VoidCallback onSelect;
+  final VoidCallback onDelete;
   @override
-  Widget build(BuildContext context) {
-    const tabs = ['我的標籤', '使用方式'];
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceSoft,
-        borderRadius: AppRadius.allRound,
-      ),
-      child: Row(
-        children: List.generate(tabs.length, (i) {
-          final sel = i == selected;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => onTap(i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 240),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: sel ? AppColors.surface : Colors.transparent,
-                  borderRadius: AppRadius.allRound,
-                  boxShadow: sel ? AppShadows.xs : null,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  tabs[i],
-                  style: TextStyle(
-                    color: sel ? AppColors.primary : AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
+  Widget build(BuildContext context) => Material(
+    color: selected ? AppColors.primary50 : AppColors.surface,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(color: selected ? AppColors.primary : AppColors.divider),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: Semantics(
+      selected: selected,
+      child: InkWell(
+        onTap: busy ? null : onSelect,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 8, 16),
+          child: Row(
+            children: [
+              Icon(
+                selected
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.qr_code_rounded,
+                color: AppColors.primary,
+                size: 25,
               ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-}
-
-class _MyTags extends ConsumerWidget {
-  const _MyTags();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(myQrItemsProvider);
-    return RefreshIndicator(
-      onRefresh: () async => ref.invalidate(myQrItemsProvider),
-      child: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => ListView(
-          children: [
-            const SizedBox(height: 80),
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
+              const SizedBox(width: 14),
+              Expanded(
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.error_outline_rounded,
-                        size: 48, color: AppColors.error),
-                    const SizedBox(height: 12),
-                    const Text('讀取失敗',
-                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    Text(
+                      tag.name,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     Text(
-                      '$e',
-                      textAlign: TextAlign.center,
+                      '${DateFormat('yyyy.MM.dd').format(tag.createdAt)} 建立',
                       style: const TextStyle(
-                        color: AppColors.textSecondary,
                         fontSize: 12,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-          ],
-        ),
-        data: (items) {
-          if (items.isEmpty) {
-            return ListView(
-              children: const [
-                SizedBox(height: 80),
-                _EmptyHint(),
-              ],
-            );
-          }
-          return GridView.builder(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            itemCount: items.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 0.8,
-            ),
-            itemBuilder: (_, i) => _TagCard(tag: items[i]),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _EmptyHint extends StatelessWidget {
-  const _EmptyHint();
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          children: const [
-            Icon(Icons.qr_code_2_rounded,
-                size: 48, color: AppColors.primary),
-            SizedBox(height: 12),
-            Text(
-              '還沒建立任何 QR 標籤',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-            ),
-            SizedBox(height: 4),
-            Text(
-              '點擊下方「建立標籤」為貴重物品產生防丟 QR',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TagCard extends ConsumerWidget {
-  const _TagCard({required this.tag});
-  final QrItemModel tag;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final fmt = DateFormat('M/d', 'zh_TW');
-    return GestureDetector(
-      onLongPress: () => _confirmDelete(context, ref),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: AppRadius.allLg,
-          boxShadow: AppShadows.sm,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AspectRatio(
-              aspectRatio: 1,
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceSoft,
-                  borderRadius: AppRadius.allMd,
-                ),
-                child: QrImageView(
-                  data: tag.qrCode,
-                  version: QrVersions.auto,
-                  size: double.infinity,
-                  backgroundColor: Colors.white,
-                  eyeStyle: const QrEyeStyle(
-                    eyeShape: QrEyeShape.square,
-                    color: AppColors.primary700,
+              if (busy)
+                const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
                   ),
-                  dataModuleStyle: const QrDataModuleStyle(
-                    dataModuleShape: QrDataModuleShape.square,
-                    color: AppColors.primary700,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              tag.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '建立：${fmt.format(tag.createdAt)}',
-              style: const TextStyle(
-                fontSize: 10,
-                color: AppColors.textTertiary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('刪除標籤'),
-        content: Text('確定要刪除「${tag.name}」嗎？此動作不可復原。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton.tonal(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('刪除'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await ref.read(qrRepositoryProvider).remove(tag.id);
-      ref.invalidate(myQrItemsProvider);
-      if (context.mounted) {
-        AppSnackbar.success(context, '已刪除');
-      }
-    } catch (e) {
-      if (context.mounted) {
-        AppSnackbar.error(context, '刪除失敗：$e');
-      }
-    }
-  }
-}
-
-class _HowItWorks extends StatelessWidget {
-  const _HowItWorks();
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _StepCard(
-            n: '01',
-            title: '建立專屬 QR 標籤',
-            desc: '為貴重物品產生一個不公開資訊的 QR，可列印貼在物品上。',
-            gradient: AppColors.primaryGradient,
-          ),
-          const SizedBox(height: 12),
-          _StepCard(
-            n: '02',
-            title: '好心人掃描 QR',
-            desc: '撿到者掃描後會看到您設定的聯絡方式，無法看到您真實手機。',
-            gradient: AppColors.mintGradient,
-          ),
-          const SizedBox(height: 12),
-          _StepCard(
-            n: '03',
-            title: '透過找得到聯繫',
-            desc: '雙方使用 App 內加密聊天溝通，保護隱私。',
-            gradient: AppColors.rewardGradient,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StepCard extends StatelessWidget {
-  const _StepCard({
-    required this.n,
-    required this.title,
-    required this.desc,
-    required this.gradient,
-  });
-  final String n;
-  final String title;
-  final String desc;
-  final Gradient gradient;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allLg,
-        boxShadow: AppShadows.xs,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              gradient: gradient,
-              borderRadius: AppRadius.allMd,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              n,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text(
-                  desc,
-                  style: const TextStyle(
-                    fontSize: 12,
+                )
+              else
+                IconButton(
+                  tooltip: '移除 ${tag.name}',
+                  onPressed: onDelete,
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    size: 21,
                     color: AppColors.textSecondary,
-                    height: 1.45,
                   ),
                 ),
-              ],
-            ),
+            ],
           ),
-        ],
+        ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-class _OutlineBtn extends StatelessWidget {
-  const _OutlineBtn({
+class _Notice extends StatelessWidget {
+  const _Notice({
     required this.icon,
-    required this.label,
-    required this.onTap,
+    required this.title,
+    required this.description,
   });
   final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
+  final String title;
+  final String description;
   @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: AppRadius.allMd,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppRadius.allMd,
-        child: Ink(
-          height: 56,
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.allMd,
-            border: Border.all(color: AppColors.primary, width: 1.5),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: AppColors.surfaceSoft,
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: AppColors.primary, size: 21),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, color: AppColors.primary),
-              const SizedBox(width: 8),
               Text(
-                label,
+                title,
                 style: const TextStyle(
-                  color: AppColors.primary,
                   fontSize: 14,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w600,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                description,
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.7,
+                  color: AppColors.textSecondary,
                 ),
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
+      ],
+    ),
+  );
+}
+
+class _EmptyCard extends StatelessWidget {
+  const _EmptyCard({
+    required this.title,
+    required this.description,
+    required this.actionLabel,
+    required this.onAction,
+  });
+  final String title;
+  final String description;
+  final String actionLabel;
+  final VoidCallback onAction;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: AppColors.divider),
+    ),
+    child: Column(
+      children: [
+        Container(
+          width: 72,
+          height: 80,
+          decoration: BoxDecoration(
+            color: AppColors.primary50,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Icon(
+            Icons.qr_code_2_rounded,
+            size: 42,
+            color: AppColors.primary,
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            height: 1.4,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          description,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            height: 1.8,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 24),
+        FilledButton(
+          onPressed: onAction,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          ),
+          child: Text(actionLabel),
+        ),
+      ],
+    ),
+  );
 }
 
 class _CreateTagSheet extends ConsumerStatefulWidget {
-  const _CreateTagSheet();
-
+  const _CreateTagSheet({required this.isDemo});
+  final bool isDemo;
   @override
   ConsumerState<_CreateTagSheet> createState() => _CreateTagSheetState();
 }
 
 class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
-  final _ctrl = TextEditingController();
-  final _descCtrl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  final _description = TextEditingController();
   bool _saving = false;
+  String? _error;
 
   @override
   void dispose() {
-    _ctrl.dispose();
-    _descCtrl.dispose();
+    _name.dispose();
+    _description.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final name = _ctrl.text.trim();
-    if (name.isEmpty) {
-      AppSnackbar.warning(context, '請先輸入物品名稱');
-      return;
-    }
-    setState(() => _saving = true);
+    if (_saving || !_formKey.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
-      await ref.read(qrRepositoryProvider).generate(
-            name: name,
-            description: _descCtrl.text.trim(),
+      final item = await ref
+          .read(qrRepositoryProvider)
+          .generate(
+            name: _name.text.trim(),
+            description: _description.text.trim(),
           );
       ref.invalidate(myQrItemsProvider);
-      if (mounted) {
-        AppSnackbar.success(context, '標籤建立成功');
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        AppSnackbar.error(context, '建立失敗：$e');
-      }
+      if (mounted) Navigator.pop(context, item);
+    } catch (_) {
+      if (mounted) setState(() => _error = '暫時無法建立。你的輸入已保留，請再試一次。');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: AppRadius.topXl,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.neutral200,
-                  borderRadius: AppRadius.allRound,
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+    child: SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.isDemo ? '新增示範防丟牌' : '新增防丟牌',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '關閉',
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                widget.isDemo
+                    ? '替物品命名，體驗專屬 QR。示範不會啟用公開認領服務。'
+                    : '以物品名稱與特徵，辨認每一張防丟牌。',
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.7,
+                  color: AppColors.textSecondary,
                 ),
               ),
-            ),
-            Text('新增 QR 標籤',
-                style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 4),
-            const Text(
-              '為物品命名方便辨識（不會公開）',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
+              const SizedBox(height: 24),
+              TextFormField(
+                controller: _name,
+                autofocus: true,
+                enabled: !_saving,
+                maxLength: 50,
+                textInputAction: TextInputAction.next,
+                validator: (value) =>
+                    (value ?? '').trim().isEmpty ? '請輸入物品名稱' : null,
+                decoration: const InputDecoration(
+                  labelText: '物品名稱',
+                  hintText: '例如：每天帶的帆布袋',
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: _ctrl,
-              autofocus: true,
-              maxLength: 50,
-              decoration: const InputDecoration(
-                hintText: '例：我的筆電、背包…',
-                labelText: '物品名稱',
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _description,
+                enabled: !_saving,
+                maxLength: 200,
+                minLines: 2,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: '物品特徵（選填）',
+                  hintText: '例如：米色，提把有一枚綠色吊飾',
+                ),
               ),
-            ),
-            TextField(
-              controller: _descCtrl,
-              maxLength: 200,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                hintText: '例：黑色，鍵盤旁有貼紙',
-                labelText: '備註（選填）',
+              const Text(
+                '請勿填寫地址、電話或其他私人資訊。',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.6,
+                  color: AppColors.textSecondary,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            GradientButton(
-              label: _saving ? '建立中…' : '產生 QR 碼',
-              icon: Icons.qr_code_rounded,
-              onPressed: _saving ? null : _submit,
-            ),
-          ],
+              if (_error != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  _error!,
+                  style: const TextStyle(
+                    color: AppColors.error,
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: _saving ? null : _submit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 17),
+                ),
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.primary,
+                        ),
+                      )
+                    : const Icon(Icons.qr_code_rounded, size: 20),
+                label: Text(
+                  _saving
+                      ? '正在建立…'
+                      : widget.isDemo
+                      ? '建立示範 QR'
+                      : '建立 QR 防丟牌',
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }

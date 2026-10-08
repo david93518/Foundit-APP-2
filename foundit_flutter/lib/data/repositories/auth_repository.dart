@@ -42,24 +42,32 @@ abstract class AuthRepository {
     String? email,
   });
   Future<void> logout();
+  Future<AuthResult> deleteAccount(String otp);
+  Future<AuthResult> deleteGoogleAccount(String idToken) async =>
+      const AuthResult(success: false, message: '體驗模式沒有可刪除的帳號');
+  Future<AuthResult> report({
+    required String targetType,
+    required String targetId,
+    required String reason,
+  });
   Future<bool> isLoggedIn();
   Future<AppUser?> cachedUser();
 }
 
 /// Mock 實作：直接回假資料，適合 UI 開發期
-class MockAuthRepository implements AuthRepository {
+class MockAuthRepository extends AuthRepository {
   MockAuthRepository(this._prefs);
   final SharedPreferences _prefs;
 
   AppUser _makeUser(String phone) => AppUser(
-        id: 'u1',
-        phone: phone,
-        name: 'David',
-        avatarUrl: 'https://i.pravatar.cc/150?img=5',
-        points: 350,
-        isVerified: true,
-        createdAt: DateTime.now(),
-      );
+    id: 'u1',
+    phone: phone,
+    name: 'David',
+    avatarUrl: 'https://i.pravatar.cc/150?img=5',
+    points: 350,
+    isVerified: true,
+    createdAt: DateTime.now(),
+  );
 
   @override
   Future<AuthResult> sendOtp(String phone) async {
@@ -81,7 +89,11 @@ class MockAuthRepository implements AuthRepository {
     await _prefs.setString(AppConstants.prefUserPhone, user.phone);
     await _prefs.setBool(AppConstants.prefIsLoggedIn, true);
     return AuthResult(
-        success: true, token: 'mock_token_xyz', user: user, message: '登入成功');
+      success: true,
+      token: 'mock_token_xyz',
+      user: user,
+      message: '登入成功',
+    );
   }
 
   @override
@@ -95,13 +107,18 @@ class MockAuthRepository implements AuthRepository {
     final user = AppUser(
       id: 'u_${provider}_mock',
       phone: '',
-      name: (name?.isNotEmpty ?? false) ? name! : '${provider.toUpperCase()} 使用者',
+      name: (name?.isNotEmpty ?? false)
+          ? name!
+          : '${provider.toUpperCase()} 使用者',
       avatarUrl: avatarUrl ?? 'https://i.pravatar.cc/150?img=12',
       points: 100,
       isVerified: true,
       createdAt: DateTime.now(),
     );
-    await _prefs.setString(AppConstants.prefAuthToken, 'mock_${provider}_token');
+    await _prefs.setString(
+      AppConstants.prefAuthToken,
+      'mock_${provider}_token',
+    );
     await _prefs.setString(AppConstants.prefUserId, user.id);
     await _prefs.setString(AppConstants.prefUserName, user.name);
     await _prefs.setString(AppConstants.prefUserAvatar, user.avatarUrl);
@@ -132,9 +149,11 @@ class MockAuthRepository implements AuthRepository {
     if (name != null && name.isNotEmpty) {
       await _prefs.setString(AppConstants.prefUserName, name);
     }
-    if (avatarUrl != null && avatarUrl.isNotEmpty) {
+    if (avatarUrl != null) {
       await _prefs.setString(AppConstants.prefUserAvatar, avatarUrl);
     }
+    if (bio != null) await _prefs.setString('user_bio', bio);
+    if (email != null) await _prefs.setString('user_email', email);
     return cachedUser();
   }
 
@@ -145,7 +164,23 @@ class MockAuthRepository implements AuthRepository {
     await _prefs.remove(AppConstants.prefUserName);
     await _prefs.remove(AppConstants.prefUserAvatar);
     await _prefs.remove(AppConstants.prefUserPhone);
+    await _prefs.remove('user_bio');
+    await _prefs.remove('user_email');
     await _prefs.setBool(AppConstants.prefIsLoggedIn, false);
+  }
+
+  @override
+  Future<AuthResult> deleteAccount(String otp) async {
+    return const AuthResult(success: false, message: '體驗模式沒有可刪除的帳號');
+  }
+
+  @override
+  Future<AuthResult> report({
+    required String targetType,
+    required String targetId,
+    required String reason,
+  }) async {
+    return const AuthResult(success: false, message: '體驗模式不會送出檢舉');
   }
 
   @override
@@ -161,6 +196,8 @@ class MockAuthRepository implements AuthRepository {
       phone: _prefs.getString(AppConstants.prefUserPhone) ?? '',
       name: _prefs.getString(AppConstants.prefUserName) ?? '',
       avatarUrl: _prefs.getString(AppConstants.prefUserAvatar) ?? '',
+      bio: _prefs.getString('user_bio') ?? '',
+      email: _prefs.getString('user_email') ?? '',
       points: 350,
       isVerified: true,
       createdAt: DateTime.now(),
@@ -173,6 +210,19 @@ class RemoteAuthRepository implements AuthRepository {
   RemoteAuthRepository(this._api, this._prefs);
   final ApiClient _api;
   final SharedPreferences _prefs;
+
+  @override
+  Future<AuthResult> deleteGoogleAccount(String idToken) async {
+    try {
+      final res = await _api.post<Map<String, dynamic>>(
+        '/users/me/delete-google', data: {'idToken': idToken},
+      );
+      return AuthResult(success: res.data?['success'] == true,
+        message: res.data?['message']?.toString() ?? '');
+    } catch (_) {
+      return const AuthResult(success: false, message: '刪除未完成，請確認使用原本的 Google 帳號後重試。');
+    }
+  }
 
   @override
   Future<AuthResult> sendOtp(String phone) async {
@@ -290,10 +340,7 @@ class RemoteAuthRepository implements AuthRepository {
     if (email != null) body['email'] = email;
     if (body.isEmpty) return getMe();
 
-    final res = await _api.patch<Map<String, dynamic>>(
-      '/users/me',
-      data: body,
-    );
+    final res = await _api.patch<Map<String, dynamic>>('/users/me', data: body);
     final data = res.data?['data'] as Map<String, dynamic>?;
     final user = data == null ? null : AppUser.fromJson(data);
     if (user != null) {
@@ -304,6 +351,9 @@ class RemoteAuthRepository implements AuthRepository {
 
   @override
   Future<void> logout() async {
+    try {
+      await _api.post('/auth/logout');
+    } catch (_) {}
     await _prefs.remove(AppConstants.prefAuthToken);
     await _prefs.remove(AppConstants.prefUserId);
     await _prefs.remove(AppConstants.prefUserName);
@@ -314,6 +364,48 @@ class RemoteAuthRepository implements AuthRepository {
     await _prefs.remove('user_points');
     await _prefs.remove('user_is_verified');
     await _prefs.setBool(AppConstants.prefIsLoggedIn, false);
+  }
+
+  @override
+  Future<AuthResult> deleteAccount(String otp) async {
+    try {
+      final res = await _api.post<Map<String, dynamic>>(
+        '/users/me/delete',
+        data: {'otp': otp},
+      );
+      final success = res.data?['success'] as bool? ?? false;
+      if (success) await logout();
+      return AuthResult(
+        success: success,
+        message: res.data?['message']?.toString() ?? '',
+      );
+    } catch (e) {
+      return AuthResult(success: false, message: e.toString());
+    }
+  }
+
+  @override
+  Future<AuthResult> report({
+    required String targetType,
+    required String targetId,
+    required String reason,
+  }) async {
+    try {
+      final res = await _api.post<Map<String, dynamic>>(
+        '/reports',
+        data: {
+          'targetType': targetType,
+          'targetId': targetId,
+          'reason': reason,
+        },
+      );
+      return AuthResult(
+        success: res.data?['success'] as bool? ?? false,
+        message: res.data?['message']?.toString() ?? '已送出檢舉',
+      );
+    } catch (e) {
+      return AuthResult(success: false, message: e.toString());
+    }
   }
 
   @override

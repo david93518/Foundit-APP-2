@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/category_icons.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/utils/haptics.dart';
 import '../../../data/models/item.dart';
@@ -377,7 +378,7 @@ class _SuggestionsView extends StatelessWidget {
           itemBuilder: (_, i) {
             final c = AppConstants.itemCategories[i];
             return _CategoryTile(
-              emoji: c.emoji,
+              icon: categoryIcon(c.name),
               label: c.name,
               onTap: () => onTap(c.name),
             );
@@ -521,11 +522,11 @@ class _HotChip extends StatelessWidget {
 
 class _CategoryTile extends StatelessWidget {
   const _CategoryTile({
-    required this.emoji,
+    required this.icon,
     required this.label,
     required this.onTap,
   });
-  final String emoji;
+  final IconData icon;
   final String label;
   final VoidCallback onTap;
 
@@ -541,14 +542,22 @@ class _CategoryTile extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: AppRadius.allMd,
-            boxShadow: AppShadows.xs,
+            border: Border.all(color: AppColors.divider),
           ),
           padding: const EdgeInsets.all(10),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(emoji, style: const TextStyle(fontSize: 24)),
-              const SizedBox(height: 6),
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: AppColors.ink50,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon, size: 19, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 8),
               Text(
                 label,
                 maxLines: 1,

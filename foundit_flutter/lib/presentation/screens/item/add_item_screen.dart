@@ -1,60 +1,57 @@
-import 'dart:io';
-
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/constants/app_constants.dart';
-import '../../../core/services/location_service.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
-import '../../../core/utils/app_snackbar.dart';
-import '../../../core/utils/haptics.dart';
+import 'location_picker_screen.dart';
+import '../../../data/api/api_client.dart';
 import '../../../data/models/item.dart';
+import '../../../data/repositories/upload_repository.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/items_provider.dart';
-import '../../widgets/gradient_button.dart';
-import 'location_picker_screen.dart';
+import '../../widgets/foundit_ui.dart';
+import '../profile/collection_screen.dart';
 
-/// 新增遺失物／撿到物 — 步驟式表單（1/3 類型，2/3 詳情，3/3 地點）
+/// 三步刊登。照片以 bytes 預覽，直到發布時才上傳。
 class AddItemScreen extends ConsumerStatefulWidget {
   const AddItemScreen({super.key, this.type = 'lost'});
   final String type;
-
   @override
   ConsumerState<AddItemScreen> createState() => _AddItemScreenState();
 }
 
 class _AddItemScreenState extends ConsumerState<AddItemScreen> {
-  int _step = 0;
+  final _itemForm = GlobalKey<FormState>();
+  final _placeForm = GlobalKey<FormState>();
+  final _scroll = ScrollController();
+  final _title = TextEditingController();
+  final _description = TextEditingController();
+  final _location = TextEditingController();
+  final _storage = TextEditingController();
+  final List<_DraftPhoto> _photos = [];
   late ItemType _type;
+  int _step = 0;
   String? _category;
   String? _color;
-  final _titleCtrl = TextEditingController();
-  final _descCtrl = TextEditingController();
-  final _locationCtrl = TextEditingController();
-  bool _hasReward = false;
-  double _reward = 500;
-  DateTime _lostAt = DateTime.now();
-
-  /// 使用者授權後取得的座標；未取得時為 null。
-  /// 提交時若為 null，會送 0/0，後端不會把它放進地圖範圍查詢結果。
-  double? _latitude;
-  double? _longitude;
-  bool _gettingLocation = false;
-
-  /// 已選但尚未上傳的本地照片（最多 5 張）
-  final List<XFile> _picked = [];
-
-  /// 上傳完成後得到的後端 URL（與 _picked 一一對應）
-  final List<String?> _uploadedUrls = [];
-
-  /// 正在上傳中的 index 集合，UI 顯示 loading
-  final Set<int> _uploading = {};
-
+  String _custody = '自行保管';
+  DateTime _date = DateUtils.dateOnly(DateTime.now());
+  bool _showCategoryError = false;
+  bool _picking = false;
   bool _submitting = false;
+  bool _openingLogin = false;
+  String? _error;
+  String _progress = '正在發布…';
+  bool _acceptedTerms = false;
+  double? _pinLat;
+  double? _pinLng;
+  bool get _isFound => _type == ItemType.found;
+  bool get _isMock => ref.read(useMockProvider);
+  bool get _busy => _submitting || _openingLogin;
 
   @override
   void initState() {
@@ -64,929 +61,542 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
 
   @override
   void dispose() {
-    _titleCtrl.dispose();
-    _descCtrl.dispose();
-    _locationCtrl.dispose();
+    _scroll.dispose();
+    _title.dispose();
+    _description.dispose();
+    _location.dispose();
+    _storage.dispose();
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
-    if (_picked.length >= 5) {
-      AppSnackbar.error(context, '最多 5 張照片');
-      return;
-    }
-    Haptics.light();
-    final picker = ImagePicker();
-    // 提供使用者選相機 / 相簿
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const _ImageSourceSheet(),
-    );
-    if (source == null) return;
-
-    final XFile? file = await picker.pickImage(
-      source: source,
-      maxWidth: 1600,
-      imageQuality: 85,
-    );
-    if (file == null) return;
-
-    final index = _picked.length;
+  void _moveTo(int step) {
+    FocusScope.of(context).unfocus();
     setState(() {
-      _picked.add(file);
-      _uploadedUrls.add(null);
-      _uploading.add(index);
+      _step = step;
+      _error = null;
     });
-
-    final url = await ref.read(uploadRepositoryProvider).uploadImage(
-          File(file.path),
-        );
-    if (!mounted) return;
-    setState(() {
-      _uploading.remove(index);
-      _uploadedUrls[index] = url;
-    });
-    if (url == null) {
-      AppSnackbar.error(context, '第 ${index + 1} 張照片上傳失敗');
-    }
-  }
-
-  void _removeImage(int i) {
-    Haptics.select();
-    setState(() {
-      _picked.removeAt(i);
-      _uploadedUrls.removeAt(i);
-      // _uploading 中比 i 大的索引要往前位移
-      final newSet = <int>{};
-      for (final idx in _uploading) {
-        if (idx == i) continue;
-        newSet.add(idx > i ? idx - 1 : idx);
-      }
-      _uploading
-        ..clear()
-        ..addAll(newSet);
-    });
-  }
-
-  Future<void> _useCurrentLocation() async {
-    if (_gettingLocation) return;
-    setState(() => _gettingLocation = true);
-    final result =
-        await ref.read(locationServiceProvider).currentPosition();
-    if (!mounted) return;
-    setState(() => _gettingLocation = false);
-
-    if (!result.isOk || result.position == null) {
-      AppSnackbar.error(context, result.message);
-      return;
-    }
-    setState(() {
-      _latitude = result.position!.latitude;
-      _longitude = result.position!.longitude;
-    });
-    AppSnackbar.success(context, '已取得目前位置');
-  }
-
-  Future<void> _pickFromMap() async {
-    Haptics.light();
-    final result = await context.push<LocationPickedResult>(
-      '/location-picker',
-      extra: {
-        'lat': _latitude,
-        'lng': _longitude,
-        'query': _locationCtrl.text.trim().isEmpty
-            ? null
-            : _locationCtrl.text.trim(),
-      },
-    );
-    if (!mounted || result == null) return;
-    setState(() {
-      _latitude = result.latitude;
-      _longitude = result.longitude;
-      if (result.address.isNotEmpty) {
-        _locationCtrl.text = result.address;
-      }
-    });
-    AppSnackbar.success(context, '已選擇地點');
-  }
-
-  Future<void> _pickDateTime() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _lostAt,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now(),
-    );
-    if (date == null) return;
-    if (!mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_lostAt),
-    );
-    if (time == null) return;
-    setState(() {
-      _lostAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    });
-  }
-
-  Future<void> _next() async {
-    if (_step < 2) {
-      setState(() => _step++);
-      return;
-    }
-    await _submit();
-  }
-
-  Future<void> _submit() async {
-    if (_uploading.isNotEmpty) {
-      AppSnackbar.error(context, '照片還在上傳中，請稍候…');
-      return;
-    }
-    if (_submitting) return;
-
-    setState(() => _submitting = true);
-
-    final urls = _uploadedUrls.whereType<String>().toList();
-    final draft = Item(
-      id: '',
-      type: _type,
-      title: _titleCtrl.text.trim(),
-      category: _category ?? '其他',
-      description: _descCtrl.text.trim(),
-      color: _color ?? '',
-      images: urls,
-      latitude: _latitude ?? 0,
-      longitude: _longitude ?? 0,
-      locationName: _locationCtrl.text.trim(),
-      lostAt: _lostAt,
-      hasReward: _hasReward,
-      reward: _hasReward ? _reward.toInt() : 0,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-
-    final created = await ref.read(createItemProvider.notifier).submit(draft);
-    if (!mounted) return;
-
-    setState(() => _submitting = false);
-
-    if (created == null) {
-      final err = ref.read(createItemProvider).error;
-      AppSnackbar.error(context, '發佈失敗：${_humanizeError(err)}');
-      return;
-    }
-
-    Haptics.light();
-    AppSnackbar.success(context, '已發佈到社群，謝謝你！');
-
-    // 通知首頁與搜尋頁刷新
-    ref.invalidate(itemsProvider);
-    ref.invalidate(itemStatsProvider);
-
-    if (mounted) context.pop(created);
-  }
-
-  String _humanizeError(Object? e) {
-    if (e == null) return '請檢查網路或稍後再試';
-    if (e is DioException) {
-      final code = e.response?.statusCode;
-      // 從後端 AllExceptionsFilter 統一回傳 { success, statusCode, message }
-      final body = e.response?.data;
-      String? backendMsg;
-      if (body is Map) {
-        final m = body['message'];
-        if (m is String) backendMsg = m;
-        if (m is List && m.isNotEmpty) backendMsg = m.first.toString();
-      }
-      if (code == 401) return '請先登入';
-      if (code == 413) return '檔案過大，請壓縮後再試';
-      if (e.type == DioExceptionType.connectionTimeout ||
-          e.type == DioExceptionType.connectionError) {
-        return '無法連線到伺服器，請確認網路或後端 IP';
-      }
-      if (backendMsg != null && backendMsg.isNotEmpty) return backendMsg;
-      return '伺服器回傳 $code';
-    }
-    final s = e.toString();
-    if (s.contains('connection') || s.contains('Network')) {
-      return '無法連線到伺服器';
-    }
-    return s.length > 120 ? '${s.substring(0, 120)}…' : s;
+    if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
   void _back() {
+    if (_busy) return;
     if (_step > 0) {
-      setState(() => _step--);
-    } else {
+      _moveTo(_step - 1);
+    } else if (context.canPop()) {
       context.pop();
+    } else {
+      context.go('/home');
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _TopBar(step: _step, onBack: _back),
-            Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 280),
-                switchInCurve: Curves.easeOutCubic,
-                transitionBuilder: (c, a) => FadeTransition(
-                  opacity: a,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0.06, 0),
-                      end: Offset.zero,
-                    ).animate(a),
-                    child: c,
-                  ),
-                ),
-                child: _buildStep(),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-              child: GradientButton(
-                key: ValueKey(_step),
-                label: _submitting
-                    ? '發佈中…'
-                    : _step == 2
-                        ? '發佈'
-                        : '下一步',
-                icon: _submitting
-                    ? null
-                    : _step == 2
-                        ? Icons.check_rounded
-                        : Icons.arrow_forward_rounded,
-                onPressed:
-                    !_submitting && _canNext() ? _next : null,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  bool _canNext() {
-    switch (_step) {
-      case 0:
-        return true;
-      case 1:
-        return _titleCtrl.text.trim().isNotEmpty && _category != null;
-      case 2:
-        return true;
-      default:
-        return true;
+  Future<void> _next() async {
+    if (_busy || _picking) return;
+    if (_step == 0) {
+      final valid = _itemForm.currentState?.validate() ?? false;
+      setState(() => _showCategoryError = _category == null);
+      if (!valid || _category == null) return;
+      _moveTo(1);
+    } else if (_step == 1) {
+      if (!(_placeForm.currentState?.validate() ?? false)) return;
+      if (_date.isAfter(DateTime.now())) {
+        setState(() => _error = '日期不能晚於今天，請重新選擇。');
+        return;
+      }
+      _moveTo(2);
+    } else {
+      await _submit();
     }
   }
 
-  Widget _buildStep() {
-    switch (_step) {
-      case 0:
-        return _StepType(
-          key: const ValueKey('s0'),
-          selected: _type,
-          onChange: (t) => setState(() => _type = t),
-        );
-      case 1:
-        return _StepDetail(
-          key: const ValueKey('s1'),
-          titleCtrl: _titleCtrl,
-          descCtrl: _descCtrl,
-          category: _category,
-          color: _color,
-          picked: _picked,
-          uploadedUrls: _uploadedUrls,
-          uploading: _uploading,
-          onAddPhoto: _pickImage,
-          onRemovePhoto: _removeImage,
-          onCategory: (v) => setState(() => _category = v),
-          onColor: (v) => setState(() => _color = v),
-          onChanged: () => setState(() {}),
-        );
-      case 2:
-        return _StepLocation(
-          key: const ValueKey('s2'),
-          locationCtrl: _locationCtrl,
-          lostAt: _lostAt,
-          hasReward: _hasReward,
-          reward: _reward,
-          latitude: _latitude,
-          longitude: _longitude,
-          gettingLocation: _gettingLocation,
-          onUseCurrentLocation: _useCurrentLocation,
-          onPickFromMap: _pickFromMap,
-          onPickTime: _pickDateTime,
-          onRewardToggle: (v) => setState(() => _hasReward = v),
-          onRewardChange: (v) => setState(() => _reward = v),
-          onChanged: () => setState(() {}),
-        );
-      default:
-        return const SizedBox();
-    }
-  }
-}
-
-class _ImageSourceSheet extends StatelessWidget {
-  const _ImageSourceSheet();
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        margin: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: AppRadius.allLg,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Text('新增照片',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 16)),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_camera_rounded,
-                  color: AppColors.primary),
-              title: const Text('打開相機'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_rounded,
-                  color: AppColors.primary),
-              title: const Text('從相簿選擇'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({required this.step, required this.onBack});
-  final int step;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    const total = 3;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-            onPressed: onBack,
-          ),
-          Expanded(
-            child: Row(
-              children: List.generate(total, (i) {
-                final active = i <= step;
-                return Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: active
-                          ? AppColors.primary
-                          : AppColors.neutral200,
-                      borderRadius: AppRadius.allRound,
-                    ),
-                  ),
-                );
-              }),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '${step + 1} / $total',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StepType extends StatelessWidget {
-  const _StepType({super.key, required this.selected, required this.onChange});
-  final ItemType selected;
-  final ValueChanged<ItemType> onChange;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('這是…', style: Theme.of(context).textTheme.displaySmall),
-          const SizedBox(height: 8),
-          Text('請選擇要登記的類型',
-              style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 28),
-          _TypeCard(
-            type: ItemType.lost,
-            title: '我遺失了東西',
-            subtitle: '幫助尋找、發佈懸賞',
-            gradient: AppColors.sunsetGradient,
-            icon: Icons.search_rounded,
-            selected: selected == ItemType.lost,
-            onTap: () => onChange(ItemType.lost),
-          ),
-          const SizedBox(height: 14),
-          _TypeCard(
-            type: ItemType.found,
-            title: '我撿到了東西',
-            subtitle: '讓失主快點聯繫到您',
-            gradient: AppColors.mintGradient,
-            icon: Icons.handshake_rounded,
-            selected: selected == ItemType.found,
-            onTap: () => onChange(ItemType.found),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TypeCard extends StatelessWidget {
-  const _TypeCard({
-    required this.type,
-    required this.title,
-    required this.subtitle,
-    required this.gradient,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final ItemType type;
-  final String title;
-  final String subtitle;
-  final Gradient gradient;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          gradient: gradient,
-          borderRadius: AppRadius.allLg,
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: (type == ItemType.lost
-                            ? AppColors.lost
-                            : AppColors.found)
-                        .withValues(alpha: 0.4),
-                    blurRadius: 24,
-                    offset: const Offset(0, 10),
-                  ),
-                ]
-              : null,
-          border: Border.all(
-            color: selected ? Colors.white : Colors.transparent,
-            width: selected ? 3 : 0,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.25),
-                borderRadius: AppRadius.allMd,
-              ),
-              child: Icon(icon, color: Colors.white, size: 28),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
+  Future<void> _pickPhoto() async {
+    if (_picking || _photos.length >= 5 || _busy) return;
+    setState(() {
+      _picking = true;
+      _error = null;
+    });
+    try {
+      var source = ImageSource.gallery;
+      if (!kIsWeb) {
+        final selected = await showModalBottomSheet<ImageSource>(
+          context: context,
+          backgroundColor: AppColors.surface,
+          showDragHandle: true,
+          builder: (sheetContext) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
-                      )),
-                  Text(subtitle,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.88),
-                        fontSize: 13,
-                      )),
+                  ListTile(
+                    leading: const Icon(Icons.photo_library_outlined),
+                    title: const Text('從相簿選擇'),
+                    onTap: () =>
+                        Navigator.pop(sheetContext, ImageSource.gallery),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.photo_camera_outlined),
+                    title: const Text('拍攝照片'),
+                    onTap: () =>
+                        Navigator.pop(sheetContext, ImageSource.camera),
+                  ),
                 ],
               ),
             ),
-            Icon(
-              selected
-                  ? Icons.check_circle_rounded
-                  : Icons.radio_button_unchecked_rounded,
-              color: Colors.white,
+          ),
+        );
+        if (selected == null || !mounted) return;
+        source = selected;
+      }
+      final file = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 1800,
+        imageQuality: 85,
+      );
+      if (file == null || !mounted) return;
+      if (await file.length() > 8 * 1024 * 1024) {
+        if (mounted) setState(() => _error = '照片需小於 8 MB，請選擇較小的圖片。');
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      if (mounted) setState(() => _photos.add(_DraftPhoto(file, bytes)));
+    } catch (_) {
+      if (mounted) setState(() => _error = '無法讀取照片。請確認照片或相機權限，再試一次。');
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _date.isAfter(today) ? today : _date,
+      firstDate: DateTime(2000),
+      lastDate: today,
+      helpText: _isFound ? '選擇拾獲日期' : '選擇遺失日期',
+      cancelText: '取消',
+      confirmText: '確認',
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: Theme.of(context).colorScheme.copyWith(
+            primary: AppColors.primary,
+            onPrimary: Colors.white,
+            surface: AppColors.surface,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (selected != null && mounted) setState(() => _date = selected);
+  }
+
+  Future<void> _pickOnMap() async {
+    final result = await context.push<LocationPickedResult>(
+      '/location-picker',
+      extra: {
+        'query': _location.text.trim(),
+        if (_pinLat != null) 'lat': _pinLat,
+        if (_pinLng != null) 'lng': _pinLng,
+      },
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _pinLat = result.latitude;
+      _pinLng = result.longitude;
+      if (result.address.trim().isNotEmpty) {
+        _location.text = result.address.trim();
+      }
+    });
+  }
+
+  Future<void> _openLogin() async {
+    if (_openingLogin) return;
+    setState(() => _openingLogin = true);
+    try {
+      await context.push('/login');
+    } finally {
+      if (mounted) setState(() => _openingLogin = false);
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    if (!_acceptedTerms) {
+      setState(() => _error = '請先閱讀並同意刊登規範。');
+      return;
+    }
+    if (!_isMock && !ref.read(authProvider).isLoggedIn) {
+      setState(() => _error = '登入後即可發布，讓對方能安全地與你聯絡。');
+      await _openLogin();
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final upload = ref.read(uploadRepositoryProvider);
+      for (var index = 0; index < _photos.length; index++) {
+        final photo = _photos[index];
+        if (photo.url != null) continue;
+        setState(() => _progress = '正在處理照片 ${index + 1} / ${_photos.length}…');
+        try {
+          photo.url = await upload.uploadImageBytes(
+            photo.bytes,
+            filename: photo.file.name,
+            mimeType: photo.file.mimeType,
+          );
+        } on UploadRejected catch (rejected) {
+          if (!mounted) return;
+          setState(() => _error = '第 ${index + 1} 張照片：${rejected.message}');
+          return;
+        }
+        if (!mounted) return;
+        if (photo.url == null || photo.url!.isEmpty) {
+          photo.url = null;
+          setState(() => _error = '第 ${index + 1} 張照片上傳失敗。資料已保留，請檢查連線後重試。');
+          return;
+        }
+      }
+      setState(() => _progress = _isMock ? '正在建立體驗刊登…' : '正在發布…');
+      final now = DateTime.now();
+      final user = ref.read(authProvider).user;
+      final draft = Item(
+        id: '',
+        type: _type,
+        userId: user?.id ?? '',
+        title: _title.text.trim(),
+        category: _category!,
+        color: _color ?? '',
+        description: _description.text.trim(),
+        images: _photos.map((photo) => photo.url!).toList(),
+        latitude: _pinLat ?? 0,
+        longitude: _pinLng ?? 0,
+        locationName: _location.text.trim(),
+        lostAt: _date,
+        storageLocation: _isFound
+            ? (_custody == '自行保管' ? _custody : _storage.text.trim())
+            : '',
+        handedToPolice: _isFound && _custody == '已交給警察機關',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final created = await ref.read(createItemProvider.notifier).submit(draft);
+      if (!mounted) return;
+      if (created == null) {
+        setState(
+          () => _error = _publishError(ref.read(createItemProvider).error),
+        );
+        return;
+      }
+      if (_isMock) {
+        final prefs = ref.read(sharedPreferencesProvider);
+        final ids = prefs.getStringList('foundit_my_item_ids') ?? [];
+        if (!ids.contains(created.id)) {
+          await prefs.setStringList('foundit_my_item_ids', [
+            ...ids,
+            created.id,
+          ]);
+        }
+        if (!mounted) return;
+      }
+      ref.invalidate(collectionProvider(false));
+      ref.invalidate(itemDetailProvider(created.id));
+      ref.invalidate(itemsProvider);
+      ref.invalidate(itemStatsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_isMock ? '體驗刊登已建立，僅在此裝置顯示。' : '刊登已發布，可以隨時回來更新資訊。'),
+          backgroundColor: AppColors.textPrimary,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      context.go('/item/${created.id}', extra: created);
+    } catch (_) {
+      if (mounted) setState(() => _error = '暫時無法發布。你的資料已保留，請稍後重試。');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  String _publishError(Object? error) {
+    if (error is DioException) {
+      if (error.response?.statusCode == 401) return '登入已逾時，請重新登入後再發布。';
+      if (error.response?.statusCode == 413) return '照片太大，請返回第一步更換較小的照片。';
+      final status = error.response?.statusCode ?? 0;
+      final message = apiErrorMessage(error);
+      if (status >= 400 && status < 500 && message != null) {
+        return '$message。資料已保留，修改後再發布。';
+      }
+    }
+    return '暫時無法發布。資料已保留，請確認網路連線後重試。';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isMock = ref.watch(useMockProvider);
+    final loggedIn = isMock || ref.watch(authProvider).isLoggedIn;
+    final label = _busy
+        ? (_openingLogin ? '前往登入…' : _progress)
+        : _step < 2
+        ? (_step == 0 ? '下一步：地點與時間' : '下一步：確認內容')
+        : !loggedIn
+        ? '登入後發布'
+        : isMock
+        ? '建立體驗刊登'
+        : '確認發布';
+    return PopScope<Object?>(
+      canPop: _step == 0 && !_busy,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && !_busy) _back();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.surface,
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              // The entire form can scroll when a keyboard or large text leaves
+              // too little height for pinned chrome. Buttons keep their tap area.
+              child: CustomScrollView(
+                controller: _scroll,
+                slivers: [
+                  SliverToBoxAdapter(child: _header()),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
+                    sliver: SliverToBoxAdapter(
+                      child: AbsorbPointer(
+                        absorbing: _busy,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (isMock) ...[
+                              const _Notice(
+                                icon: Icons.visibility_outlined,
+                                text: '體驗模式 · 刊登僅儲存在此裝置，不會同步或發布給其他使用者。',
+                              ),
+                              const SizedBox(height: 20),
+                            ],
+                            if (_step == 0) _itemStep(),
+                            if (_step == 1) _placeStep(),
+                            if (_step == 2) _reviewStep(loggedIn),
+                            if (_error != null) ...[
+                              const SizedBox(height: 20),
+                              Semantics(
+                                liveRegion: true,
+                                child: _Notice(
+                                  icon: Icons.info_outline_rounded,
+                                  text: _error!,
+                                  isError: true,
+                                ),
+                              ),
+                              if (_error!.contains('重新登入'))
+                                TextButton(
+                                  onPressed: _busy ? null : _openLogin,
+                                  child: const Text('重新登入'),
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: _footer(label),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
   }
-}
 
-class _StepDetail extends StatelessWidget {
-  const _StepDetail({
-    super.key,
-    required this.titleCtrl,
-    required this.descCtrl,
-    required this.category,
-    required this.color,
-    required this.picked,
-    required this.uploadedUrls,
-    required this.uploading,
-    required this.onAddPhoto,
-    required this.onRemovePhoto,
-    required this.onCategory,
-    required this.onColor,
-    required this.onChanged,
-  });
-
-  final TextEditingController titleCtrl;
-  final TextEditingController descCtrl;
-  final String? category;
-  final String? color;
-  final List<XFile> picked;
-  final List<String?> uploadedUrls;
-  final Set<int> uploading;
-  final VoidCallback onAddPhoto;
-  final ValueChanged<int> onRemovePhoto;
-  final ValueChanged<String> onCategory;
-  final ValueChanged<String> onColor;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('描述一下',
-              style: Theme.of(context).textTheme.displaySmall),
-          const SizedBox(height: 8),
-          Text('越詳細越容易配對到',
-              style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 20),
-          _PhotoPicker(
-            picked: picked,
-            uploadedUrls: uploadedUrls,
-            uploading: uploading,
-            onAdd: onAddPhoto,
-            onRemove: onRemovePhoto,
-          ),
-          const SizedBox(height: 20),
-          _Label('標題'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: titleCtrl,
-            onChanged: (_) => onChanged(),
-            decoration: const InputDecoration(hintText: '例：黑色皮夾'),
-          ),
-          const SizedBox(height: 20),
-          _Label('分類'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: AppConstants.itemCategories.map((c) {
-              final sel = c.name == category;
-              return _WrapChip(
-                label: '${c.emoji} ${c.name}',
-                selected: sel,
-                onTap: () => onCategory(c.name),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 20),
-          _Label('顏色'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: AppConstants.itemColors.map((c) {
-              final sel = c == color;
-              return _WrapChip(
-                label: c,
-                selected: sel,
-                onTap: () => onColor(c),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 20),
-          _Label('詳細描述'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: descCtrl,
-            minLines: 3,
-            maxLines: 6,
-            onChanged: (_) => onChanged(),
-            decoration:
-                const InputDecoration(hintText: '外觀特徵、品牌、內容物等…'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StepLocation extends StatelessWidget {
-  const _StepLocation({
-    super.key,
-    required this.locationCtrl,
-    required this.lostAt,
-    required this.hasReward,
-    required this.reward,
-    required this.latitude,
-    required this.longitude,
-    required this.gettingLocation,
-    required this.onUseCurrentLocation,
-    required this.onPickFromMap,
-    required this.onPickTime,
-    required this.onRewardToggle,
-    required this.onRewardChange,
-    required this.onChanged,
-  });
-
-  final TextEditingController locationCtrl;
-  final DateTime lostAt;
-  final bool hasReward;
-  final double reward;
-  final double? latitude;
-  final double? longitude;
-  final bool gettingLocation;
-  final VoidCallback onUseCurrentLocation;
-  final VoidCallback onPickFromMap;
-  final VoidCallback onPickTime;
-  final ValueChanged<bool> onRewardToggle;
-  final ValueChanged<double> onRewardChange;
-  final VoidCallback onChanged;
-
-  String _formatDateTime(DateTime t) {
-    final now = DateTime.now();
-    final diff = now.difference(t);
-    if (diff.inMinutes < 1) return '剛剛';
-    if (diff.inMinutes < 60) return '${diff.inMinutes} 分鐘前';
-    if (diff.inHours < 24) return '${diff.inHours} 小時前';
-    if (diff.inDays < 7) return '${diff.inDays} 天前';
-    return '${t.year}/${t.month.toString().padLeft(2, '0')}/${t.day.toString().padLeft(2, '0')} '
-        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('地點與時間',
-              style: Theme.of(context).textTheme.displaySmall),
-          const SizedBox(height: 8),
-          Text('最後看到 / 撿到的位置',
-              style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 20),
-          _Label('地點'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: locationCtrl,
-            onChanged: (_) => onChanged(),
-            decoration: const InputDecoration(
-              hintText: '例：台北車站 M3 出口、忠孝復興捷運站、新光三越 A11…',
-              prefixIcon: Icon(Icons.place_outlined),
+  Widget _footer(String label) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
+    decoration: const BoxDecoration(
+      color: AppColors.surface,
+      border: Border(top: BorderSide(color: AppColors.divider)),
+    ),
+    child: Builder(
+      builder: (context) {
+        final stack =
+            MediaQuery.sizeOf(context).width < 428 &&
+            MediaQuery.textScalerOf(context).scale(14) > 19;
+        final next = FilledButton(
+          onPressed: _busy || _picking ? null : _next,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(0, 52),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
-          const SizedBox(height: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_busy) ...[
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (!_busy) ...[
+                const SizedBox(width: 8),
+                Icon(
+                  _step == 2
+                      ? Icons.check_rounded
+                      : Icons.arrow_forward_rounded,
+                  size: 18,
+                ),
+              ],
+            ],
+          ),
+        );
+        final back = OutlinedButton(
+          onPressed: _busy ? null : _back,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.textPrimary,
+            minimumSize: const Size(80, 52),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            side: const BorderSide(color: AppColors.divider),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: const Text('上一步'),
+        );
+        if (stack) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              next,
+              if (_step > 0) ...[const SizedBox(height: 10), back],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            if (_step > 0) ...[back, const SizedBox(width: 12)],
+            Expanded(child: next),
+          ],
+        );
+      },
+    ),
+  );
+
+  Widget _header() {
+    const steps = ['物品資訊', '地點時間', '確認發布'];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 6, 20, 14),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppColors.divider)),
+      ),
+      child: Column(
+        children: [
           Row(
             children: [
-              Expanded(
-                child: Material(
-                  color: AppColors.primary50,
-                  borderRadius: AppRadius.allMd,
-                  child: InkWell(
-                    borderRadius: AppRadius.allMd,
-                    onTap: onPickFromMap,
-                    child: const Padding(
-                      padding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                      child: Row(
-                        children: [
-                          Icon(Icons.map_rounded,
-                              color: AppColors.primary, size: 20),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '在地圖上選擇 / 搜尋',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          ),
-                          Icon(Icons.chevron_right_rounded,
-                              color: AppColors.primary),
-                        ],
-                      ),
-                    ),
+              IconButton(
+                tooltip: _step == 0 ? '返回探索' : '回到上一步',
+                onPressed: _busy ? null : _back,
+                icon: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(width: 2),
+              const Expanded(
+                child: Text(
+                  '建立刊登',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+              ),
+              Text(
+                '${_step + 1} / 3',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Material(
-            color: latitude != null
-                ? AppColors.found50
-                : AppColors.surfaceSoft,
-            borderRadius: AppRadius.allMd,
-            child: InkWell(
-              borderRadius: AppRadius.allMd,
-              onTap: gettingLocation ? null : onUseCurrentLocation,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 12),
-                child: Row(
-                  children: [
-                    if (gettingLocation)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: AppColors.primary,
-                        ),
-                      )
-                    else
-                      Icon(
-                        latitude != null
-                            ? Icons.check_circle_rounded
-                            : Icons.my_location_rounded,
-                        color: latitude != null
-                            ? AppColors.found
-                            : AppColors.primary,
-                        size: 20,
-                      ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        gettingLocation
-                            ? '正在取得位置…'
-                            : latitude != null
-                                ? '已選位置：${latitude!.toStringAsFixed(4)}, ${longitude!.toStringAsFixed(4)}'
-                                : '使用我目前的位置（建議啟用）',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: latitude != null
-                              ? AppColors.found
-                              : AppColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                    if (latitude == null && !gettingLocation)
-                      const Icon(Icons.chevron_right_rounded,
-                          color: AppColors.textTertiary),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          _Label('時間'),
-          const SizedBox(height: 8),
-          Material(
-            color: AppColors.surfaceSoft,
-            borderRadius: AppRadius.allMd,
-            child: InkWell(
-              onTap: onPickTime,
-              borderRadius: AppRadius.allMd,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 16),
-                child: Row(
-                  children: [
-                    const Icon(Icons.calendar_month_rounded,
-                        color: AppColors.textSecondary),
-                    const SizedBox(width: 12),
-                    Text(_formatDateTime(lostAt),
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        )),
-                    const Spacer(),
-                    const Icon(Icons.chevron_right_rounded,
-                        color: AppColors.textTertiary),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: AppColors.rewardGradient,
-              borderRadius: AppRadius.allLg,
-            ),
-            child: Column(
+          const SizedBox(height: 10),
+          // 三段進度條：完成的段落填滿陶土色，一眼看出還剩幾步。
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.local_fire_department_rounded,
-                        color: Colors.white, size: 22),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('懸賞',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              )),
-                          Text('提高被找回的機率',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                              )),
-                        ],
-                      ),
-                    ),
-                    Switch(
-                      value: hasReward,
-                      onChanged: onRewardToggle,
-                      activeColor: Colors.white,
-                      activeTrackColor: Colors.white.withValues(alpha: 0.4),
-                    ),
-                  ],
-                ),
-                if (hasReward) ...[
-                  Row(
-                    children: [
-                      const Text('NT\$',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          )),
-                      const SizedBox(width: 6),
-                      Text(
-                        reward.toInt().toString(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
+                for (var index = 0; index < 3; index++)
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: index < 2 ? 6 : 0),
+                      child: AnimatedContainer(
+                        duration: AppMotion.of(context, AppMotion.base),
+                        curve: AppMotion.curve,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: index <= _step
+                              ? AppColors.primary
+                              : AppColors.ink100,
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                    ],
-                  ),
-                  SliderTheme(
-                    data: SliderThemeData(
-                      activeTrackColor: Colors.white,
-                      inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
-                      thumbColor: Colors.white,
-                      overlayColor: Colors.white.withValues(alpha: 0.2),
-                    ),
-                    child: Slider(
-                      min: 100,
-                      max: 10000,
-                      divisions: 99,
-                      value: reward,
-                      onChanged: onRewardChange,
                     ),
                   ),
-                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Row(
+              children: [
+                for (var index = 0; index < 3; index++)
+                  Expanded(
+                    child: Text(
+                      steps[index],
+                      textAlign: index == 0
+                          ? TextAlign.left
+                          : index == 1
+                          ? TextAlign.center
+                          : TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: index == _step
+                            ? AppColors.ink
+                            : AppColors.textTertiary,
+                        fontWeight: index == _step
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -994,205 +604,778 @@ class _StepLocation extends StatelessWidget {
       ),
     );
   }
-}
 
-class _PhotoPicker extends StatelessWidget {
-  const _PhotoPicker({
-    required this.picked,
-    required this.uploadedUrls,
-    required this.uploading,
-    required this.onAdd,
-    required this.onRemove,
-  });
+  Widget _itemStep() => Form(
+    key: _itemForm,
+    autovalidateMode: AutovalidateMode.onUserInteraction,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _StepHeading('物品資訊', '新增照片，讓物品更容易被認出。'),
+        const _FieldLabel('物品照片', optional: true),
+        _photoPicker(),
+        const SizedBox(height: 10),
+        const Text(
+          '最多 5 張。請遮住證件號碼、電話等個人資料。',
+          style: TextStyle(
+            fontSize: 12,
+            color: AppColors.textSecondary,
+            height: 1.6,
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Divider(height: 1, color: AppColors.divider),
+        ),
+        const _FieldLabel('刊登類型'),
+        Row(
+          children: [
+            Expanded(
+              child: _typeOption(ItemType.lost, Icons.search_rounded, '我遺失了物品'),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _typeOption(
+                ItemType.found,
+                Icons.volunteer_activism_outlined,
+                '我撿到了物品',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        const _FieldLabel('物品名稱'),
+        TextFormField(
+          key: const ValueKey('publish-title'),
+          controller: _title,
+          maxLength: 80,
+          textInputAction: TextInputAction.next,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+          decoration: _decoration('例如：深棕色皮夾、銀色鑰匙圈'),
+          validator: (value) =>
+              (value ?? '').trim().isEmpty ? '請填寫物品名稱。' : null,
+        ),
+        const SizedBox(height: 12),
+        const _FieldLabel('物品分類'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: AppConstants.itemCategories
+              .map(
+                (category) => _Choice(
+                  label: category.name,
+                  selected: _category == category.name,
+                  onTap: () => setState(() {
+                    _category = category.name;
+                    _showCategoryError = false;
+                  }),
+                ),
+              )
+              .toList(),
+        ),
+        if (_showCategoryError)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              '請選擇一個物品分類。',
+              style: TextStyle(color: AppColors.error, fontSize: 12),
+            ),
+          ),
+        const SizedBox(height: 28),
+        const _FieldLabel('主要顏色', optional: true),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: AppConstants.itemColors
+              .map(
+                (color) => _Choice(
+                  label: color,
+                  selected: _color == color,
+                  onTap: () =>
+                      setState(() => _color = _color == color ? null : color),
+                ),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 28),
+        const _FieldLabel('補充描述', optional: true),
+        TextFormField(
+          controller: _description,
+          minLines: 3,
+          maxLines: 5,
+          maxLength: 500,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 15,
+            height: 1.6,
+          ),
+          decoration: _decoration('品牌、外觀或明顯特徵。保留一個只有失主知道的細節，供私下核對。'),
+        ),
+      ],
+    ),
+  );
 
-  final List<XFile> picked;
-  final List<String?> uploadedUrls;
-  final Set<int> uploading;
-  final VoidCallback onAdd;
-  final ValueChanged<int> onRemove;
+  Widget _typeOption(ItemType type, IconData icon, String label) {
+    final selected = _type == type;
+    // 遺失＝炭墨、撿到＝陶土，與首頁入口及狀態標籤同一套顏色。
+    final accent = type == ItemType.lost ? AppColors.ink : AppColors.primary;
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: Material(
+        color: selected ? accent : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: () => setState(() => _type = type),
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 68),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+            decoration: BoxDecoration(
+              border: Border.all(color: selected ? accent : AppColors.divider),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  icon,
+                  color: selected ? Colors.white : AppColors.textSecondary,
+                  size: 21,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: selected ? Colors.white : AppColors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    final hasAny = picked.isNotEmpty;
-    return SizedBox(
-      height: 120,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          // Add button
+  Widget _photoPicker() {
+    final addLabel = _picking ? '讀取中…' : '新增照片';
+    final counter = '${_photos.length} / 5';
+    const spinner = SizedBox(
+      width: 22,
+      height: 22,
+      child: CircularProgressIndicator(
+        strokeWidth: 2,
+        color: AppColors.primary,
+      ),
+    );
+    if (_photos.isEmpty) {
+      // 第一張照片是最重要的欄位：用整寬的角括號框，邀請使用者放進來。
+      return Pressable(
+        onTap: _picking ? null : _pickPhoto,
+        semanticLabel: addLabel,
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 168),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.primary50,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.primary200),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              BracketMark(
+                size: 64,
+                color: AppColors.primary300,
+                strokeWidth: 2.6,
+                child: _picking
+                    ? spinner
+                    : const Icon(
+                        Icons.add_a_photo_outlined,
+                        color: AppColors.primary,
+                        size: 24,
+                      ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                addLabel,
+                style: const TextStyle(
+                  color: AppColors.primary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (!_picking) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '第一張會成為封面 · $counter',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        for (final (index, photo) in _photos.indexed)
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Image.memory(
+                  photo.bytes,
+                  width: 100,
+                  height: 100,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox(
+                    width: 100,
+                    height: 100,
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+              if (index == 0)
+                Positioned(
+                  left: 6,
+                  bottom: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .94),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      '封面',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                right: 0,
+                top: 0,
+                child: IconButton(
+                  tooltip: '移除照片',
+                  onPressed: () => setState(() => _photos.remove(photo)),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.ink.withValues(alpha: 0.78),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(44, 44),
+                  ),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                ),
+              ),
+            ],
+          ),
+        if (_photos.length < 5)
           Material(
             color: AppColors.primary50,
-            borderRadius: AppRadius.allMd,
+            borderRadius: BorderRadius.circular(14),
             child: InkWell(
-              borderRadius: AppRadius.allMd,
-              onTap: onAdd,
+              onTap: _picking ? null : _pickPhoto,
+              borderRadius: BorderRadius.circular(14),
               child: Container(
-                width: 120,
+                width: 100,
+                height: 100,
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  borderRadius: AppRadius.allMd,
-                  border: Border.all(
-                    color: AppColors.primary200,
-                    width: 1.5,
-                  ),
+                  border: Border.all(color: AppColors.primary200),
+                  borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        gradient: AppColors.primaryGradient,
-                        shape: BoxShape.circle,
-                        boxShadow: AppShadows.primary,
-                      ),
-                      child: const Icon(
-                        Icons.camera_alt_rounded,
-                        color: Colors.white,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      hasAny ? '加更多' : '新增照片',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                    if (_picking)
+                      spinner
+                    else
+                      const Icon(
+                        Icons.add_rounded,
                         color: AppColors.primary,
+                        size: 24,
                       ),
-                    ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 6),
                     Text(
-                      '${picked.length}/5',
+                      addLabel,
                       style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textTertiary,
+                        color: AppColors.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
+                    if (!_picking)
+                      Text(
+                        counter,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
                   ],
                 ),
               ),
             ),
           ),
-          for (int i = 0; i < picked.length; i++) ...[
-            const SizedBox(width: 10),
-            _PhotoTile(
-              file: picked[i],
-              uploadedUrl: uploadedUrls[i],
-              isUploading: uploading.contains(i),
-              onRemove: () => onRemove(i),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _PhotoTile extends StatelessWidget {
-  const _PhotoTile({
-    required this.file,
-    required this.uploadedUrl,
-    required this.isUploading,
-    required this.onRemove,
-  });
-
-  final XFile file;
-  final String? uploadedUrl;
-  final bool isUploading;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Container(
-          width: 120,
-          height: 120,
-          clipBehavior: Clip.hardEdge,
-          decoration: BoxDecoration(borderRadius: AppRadius.allMd),
-          child: _buildPreview(),
-        ),
-        if (isUploading)
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.45),
-              borderRadius: AppRadius.allMd,
-            ),
-            child: const Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.4,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        if (!isUploading && uploadedUrl == null)
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.55),
-              borderRadius: AppRadius.allMd,
-            ),
-            alignment: Alignment.center,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                '上傳失敗\n請刪除重試',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontSize: 11),
-              ),
-            ),
-          ),
-        Positioned(
-          top: 4,
-          right: 4,
-          child: GestureDetector(
-            onTap: onRemove,
-            child: Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.close_rounded,
-                  size: 16, color: Colors.white),
-            ),
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildPreview() {
-    // 一律用本地檔案做預覽（最快、最可靠）。
-    // 上傳成功與否只影響「能否提交」，不影響預覽顯示。
-    return Image.file(
-      File(file.path),
-      fit: BoxFit.cover,
-      width: 120,
-      height: 120,
-      errorBuilder: (_, __, ___) => Container(
-        width: 120,
-        height: 120,
-        color: AppColors.neutral100,
-        alignment: Alignment.center,
-        child: const Icon(Icons.broken_image_outlined,
-            color: AppColors.textTertiary),
+  Widget _placeStep() => Form(
+    key: _placeForm,
+    autovalidateMode: AutovalidateMode.onUserInteraction,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _StepHeading('地點與時間', _isFound ? '填寫拾獲地點、日期與保管方式。' : '填寫最後看見物品的地點與日期。'),
+        _FieldLabel(_isFound ? '拾獲地點' : '遺失地點'),
+        TextFormField(
+          key: const ValueKey('publish-location'),
+          controller: _location,
+          maxLength: 150,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+          decoration: _decoration('例如：台北市中山區・雙連站 1 號出口').copyWith(
+            prefixIcon: const Icon(
+              Icons.place_outlined,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          validator: (value) =>
+              (value ?? '').trim().isEmpty ? '請填寫地點，讓附近的人更容易找到。' : null,
+        ),
+        const Text(
+          '填寫大概區域與附近地標即可，避免公開私人住址。',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            height: 1.6,
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _pickOnMap,
+            icon: const Icon(Icons.add_location_alt_outlined),
+            label: Text(_pinLat == null ? '在地圖上標示位置' : '已標示地圖位置，可重新選擇'),
+          ),
+        ),
+        const SizedBox(height: 28),
+        _FieldLabel(_isFound ? '拾獲日期' : '遺失日期'),
+        Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            onTap: _pickDate,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                border: Border.all(color: AppColors.divider),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.calendar_today_outlined,
+                    color: AppColors.textSecondary,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _dateLabel,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.textSecondary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '不確定時，選擇最接近的日期即可。',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+        if (_isFound) ...[
+          const SizedBox(height: 32),
+          const _FieldLabel('目前由誰保管？'),
+          for (final option in ['自行保管', '已交給店家或站務人員', '已交給警察機關']) ...[
+            const SizedBox(height: 8),
+            _custodyOption(option),
+          ],
+          if (_custody != '自行保管') ...[
+            const SizedBox(height: 20),
+            const _FieldLabel('保管單位名稱'),
+            TextFormField(
+              key: const ValueKey('publish-storage'),
+              controller: _storage,
+              maxLength: 100,
+              decoration: _decoration(
+                _custody == '已交給警察機關' ? '例如：中山一派出所' : '例如：雙連站服務台',
+              ),
+              validator: (value) =>
+                  (value ?? '').trim().isEmpty ? '請填寫保管單位，方便失主詢問。' : null,
+            ),
+          ],
+        ],
+        const SizedBox(height: 28),
+        const _Notice(
+          icon: Icons.lock_outline_rounded,
+          text: '保留一個未公開的物品特徵，聯絡時再核對，讓物品安心回到主人身邊。',
+        ),
+      ],
+    ),
+  );
+
+  Widget _custodyOption(String option) {
+    final selected = _custody == option;
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: Material(
+        color: selected ? AppColors.primary50 : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: () => setState(() => _custody = option),
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: selected ? AppColors.primary : AppColors.divider,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  size: 21,
+                  color: selected ? AppColors.primary : AppColors.textSecondary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    option,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
+
+  String get _dateLabel => '${_date.year} 年 ${_date.month} 月 ${_date.day} 日';
+
+  Widget _reviewStep(bool loggedIn) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _StepHeading('確認刊登內容', '確認物品資訊後，即可完成刊登。'),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: AppColors.divider),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary50,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Text(
+                    _isFound ? '待認領' : '協尋中',
+                    style: const TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _moveTo(0),
+                  child: const Text(
+                    '修改物品',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _title.text.trim(),
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 24,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              [_category!, if (_color != null) _color!].join('  ·  '),
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            if (_photos.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 110,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _photos.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  itemBuilder: (_, index) => ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(
+                      _photos[index].bytes,
+                      width: 110,
+                      height: 110,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox(
+                        width: 110,
+                        child: Icon(Icons.broken_image_outlined),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (_description.text.trim().isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Text(
+                _description.text.trim(),
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 14,
+                  height: 1.7,
+                ),
+              ),
+            ],
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Divider(height: 1, color: AppColors.divider),
+            ),
+            _reviewRow(Icons.place_outlined, _location.text.trim()),
+            const SizedBox(height: 14),
+            _reviewRow(Icons.calendar_today_outlined, _dateLabel),
+            if (_isFound) ...[
+              const SizedBox(height: 14),
+              _reviewRow(
+                Icons.inventory_2_outlined,
+                _custody == '自行保管'
+                    ? _custody
+                    : '$_custody・${_storage.text.trim()}',
+              ),
+            ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => _moveTo(1),
+                child: const Text(
+                  '修改地點與時間',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
+      CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _acceptedTerms,
+        onChanged: (value) => setState(() => _acceptedTerms = value ?? false),
+        controlAffinity: ListTileControlAffinity.leading,
+        title: const Text('我已閱讀並同意刊登規範'),
+        subtitle: const Text('刊登前需同意：不得公開證件號碼、私人住址或他人聯絡方式。'),
+      ),
+      _Notice(
+        icon: loggedIn ? Icons.public_outlined : Icons.person_outline_rounded,
+        text: _isMock
+            ? '這是體驗刊登，不會發布給其他使用者，也不會發送通知。'
+            : loggedIn
+            ? '以上內容會公開顯示。請確認照片與描述未包含電話、證件號碼或私人住址。'
+            : '登入後即可發布，讓對方能安全地與你聯絡。以上內容將公開顯示。',
+      ),
+    ],
+  );
+
+  Widget _reviewRow(IconData icon, String text) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Icon(icon, size: 18, color: AppColors.textSecondary),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 14,
+            height: 1.5,
+          ),
+        ),
+      ),
+    ],
+  );
+
+  InputDecoration _decoration(String hint) => InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(
+      color: AppColors.textSecondary,
+      fontSize: 14,
+      height: 1.6,
+    ),
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: const BorderSide(color: AppColors.divider),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: const BorderSide(color: AppColors.divider),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+    ),
+    errorMaxLines: 6,
+  );
 }
 
-class _WrapChip extends StatelessWidget {
-  const _WrapChip({
+class _DraftPhoto {
+  _DraftPhoto(this.file, this.bytes);
+  final XFile file;
+  final Uint8List bytes;
+  String? url;
+}
+
+class _StepHeading extends StatelessWidget {
+  const _StepHeading(this.title, this.subtitle);
+  final String title;
+  final String subtitle;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 24),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 23,
+            height: 1.35,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.4,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 13,
+            height: 1.7,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _FieldLabel extends StatelessWidget {
+  const _FieldLabel(this.text, {this.optional = false});
+  final String text;
+  final bool optional;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Wrap(
+      spacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          text,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        if (optional)
+          const Padding(
+            padding: EdgeInsets.only(left: 8),
+            child: Text(
+              '選填',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+class _Choice extends StatelessWidget {
+  const _Choice({
     required this.label,
     required this.selected,
     required this.onTap,
@@ -1200,46 +1383,71 @@ class _WrapChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-
   @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? AppColors.primary : AppColors.surfaceSoft,
-      borderRadius: AppRadius.allRound,
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    button: true,
+    child: Material(
+      color: selected ? AppColors.primary50 : Colors.white,
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
-        borderRadius: AppRadius.allRound,
         onTap: onTap,
-        child: Padding(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: selected ? AppColors.primary : AppColors.divider,
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
           child: Text(
             label,
             style: TextStyle(
-              color: selected ? Colors.white : AppColors.textSecondary,
+              color: selected ? AppColors.primary : AppColors.textPrimary,
               fontSize: 13,
-              fontWeight: FontWeight.w600,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-class _Label extends StatelessWidget {
-  const _Label(this.text);
+class _Notice extends StatelessWidget {
+  const _Notice({required this.icon, required this.text, this.isError = false});
+  final IconData icon;
   final String text;
-
+  final bool isError;
   @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textSecondary,
-        letterSpacing: 0.3,
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: isError ? AppColors.error50 : AppColors.primary50,
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          icon,
+          color: isError ? AppColors.error : AppColors.textSecondary,
+          size: 18,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: isError ? AppColors.error : AppColors.textSecondary,
+              fontSize: 12,
+              height: 1.7,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }

@@ -15,7 +15,8 @@ import '../../data/repositories/user_repository.dart';
 /// SharedPreferences — 入口由 `main.dart` 在 bootstrap 期間用 overrideWithValue 提供
 final sharedPreferencesProvider = Provider<SharedPreferences>(
   (ref) => throw UnimplementedError(
-      'Override sharedPreferencesProvider in ProviderScope'),
+    'Override sharedPreferencesProvider in ProviderScope',
+  ),
 );
 
 final apiClientProvider = Provider<ApiClient>((ref) {
@@ -37,7 +38,9 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 });
 
 final itemRepositoryProvider = Provider<ItemRepository>((ref) {
-  if (ref.watch(useMockProvider)) return MockItemRepository();
+  if (ref.watch(useMockProvider)) {
+    return MockItemRepository(prefs: ref.watch(sharedPreferencesProvider));
+  }
   return RemoteItemRepository(ref.watch(apiClientProvider));
 });
 

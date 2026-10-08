@@ -34,6 +34,7 @@ class ChatSocketService {
 
   final SharedPreferences _prefs;
   io.Socket? _socket;
+  String? _token;
 
   final _messages = StreamController<Message>.broadcast();
   final _reads = StreamController<ChatReadEvent>.broadcast();
@@ -51,13 +52,14 @@ class ChatSocketService {
   /// 建立或重用 WebSocket 連線。
   /// 沒有 token 會直接 fail（回傳 false），呼叫端自行決定是否提示登入。
   Future<bool> connect() async {
-    if (_socket != null && _socket!.connected) return true;
-
     final token = _prefs.getString(AppConstants.prefAuthToken);
     if (token == null || token.isEmpty) {
       _emitStatus(ChatSocketStatus.error);
       return false;
     }
+    if (_socket != null && _socket!.connected && _token == token) return true;
+    disconnect();
+    _token = token;
 
     _emitStatus(ChatSocketStatus.connecting);
 
@@ -106,20 +108,24 @@ class ChatSocketService {
   void sendMessage({
     required String chatId,
     required String content,
-    String type = 'text',
+    String type = 'TEXT',
+    String? clientMessageId,
   }) {
     _socket?.emit('message', {
       'chatId': chatId,
       'content': content,
-      'type': type,
+      'type': type.toUpperCase(),
+      if (clientMessageId != null) 'client_message_id': clientMessageId,
     });
   }
 
-  void markRead(String chatId) {
-    _socket?.emit('read', {'chatId': chatId});
+  void markRead(String chatId, {String? upToMessageId}) {
+    if (upToMessageId == null || upToMessageId.isEmpty) return;
+    _socket?.emit('read', {'chatId': chatId, 'upToMessageId': upToMessageId});
   }
 
   void disconnect() {
+    _token = null;
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;
