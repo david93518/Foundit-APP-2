@@ -17,10 +17,38 @@ import '../../providers/items_provider.dart';
 import '../../widgets/foundit_ui.dart';
 import '../profile/collection_screen.dart';
 
+class EditItemRoute extends ConsumerWidget {
+  const EditItemRoute({super.key, required this.id});
+  final String id;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => ref
+      .watch(itemDetailProvider(id))
+      .when(
+        loading: () =>
+            const Scaffold(body: Center(child: CircularProgressIndicator())),
+        error: (_, __) => Scaffold(
+          appBar: AppBar(title: const Text('編輯刊登')),
+          body: Center(
+            child: TextButton(
+              onPressed: () => ref.invalidate(itemDetailProvider(id)),
+              child: const Text('載入失敗，點此重試'),
+            ),
+          ),
+        ),
+        data: (item) => item == null
+            ? Scaffold(
+                appBar: AppBar(title: const Text('編輯刊登')),
+                body: const Center(child: Text('找不到這則刊登。')),
+              )
+            : AddItemScreen(key: ValueKey(item.id), editing: item),
+      );
+}
+
 /// 三步刊登。照片以 bytes 預覽，直到發布時才上傳。
 class AddItemScreen extends ConsumerStatefulWidget {
-  const AddItemScreen({super.key, this.type = 'lost'});
+  const AddItemScreen({super.key, this.type = 'lost', this.editing});
   final String type;
+  final Item? editing;
   @override
   ConsumerState<AddItemScreen> createState() => _AddItemScreenState();
 }
@@ -47,6 +75,8 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
   String? _error;
   String _progress = '正在發布…';
   bool _acceptedTerms = false;
+  bool _allowExit = false;
+  bool get _editing => widget.editing != null;
   double? _pinLat;
   double? _pinLng;
   bool get _isFound => _type == ItemType.found;
@@ -57,6 +87,28 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
   void initState() {
     super.initState();
     _type = widget.type == 'found' ? ItemType.found : ItemType.lost;
+    final item = widget.editing;
+    if (item != null) {
+      _type = item.type;
+      _title.text = item.title;
+      _description.text = item.description;
+      _location.text = item.locationName;
+      _category = item.category;
+      _color = item.color;
+      _date = DateUtils.dateOnly(item.lostAt);
+      _storage.text = item.storageLocation;
+      _custody = item.handedToPolice
+          ? '已交給警察機關'
+          : item.storageLocation.isNotEmpty && item.storageLocation != '自行保管'
+          ? '已交給店家或站務人員'
+          : '自行保管';
+      if (item.hasMapPosition) {
+        _pinLat = item.latitude;
+        _pinLng = item.longitude;
+      }
+      _photos.addAll(item.images.map(_DraftPhoto.existing));
+      _acceptedTerms = true;
+    }
   }
 
   @override
@@ -78,10 +130,36 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
-  void _back() {
+  Future<void> _back() async {
     if (_busy) return;
     if (_step > 0) {
       _moveTo(_step - 1);
+    } else if (_editing) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          scrollable: true,
+          title: const Text('放棄這次修改？'),
+          content: const Text('尚未儲存的修改會取消，原本刊登不受影響。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('繼續編輯'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('放棄修改'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true || !mounted) return;
+      setState(() => _allowExit = true);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      context.canPop()
+          ? context.pop()
+          : context.go('/item/${widget.editing!.id}');
     } else if (context.canPop()) {
       context.pop();
     } else {
@@ -98,6 +176,11 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
       _moveTo(1);
     } else if (_step == 1) {
       if (!(_placeForm.currentState?.validate() ?? false)) return;
+      if (!Item.validPosition(_pinLat, _pinLng)) {
+        setState(() => _error = '請在地圖上確認大概位置，這則刊登才會顯示在地圖中。');
+        await _pickOnMap();
+        return;
+      }
       if (_date.isAfter(DateTime.now())) {
         setState(() => _error = '日期不能晚於今天，請重新選擇。');
         return;
@@ -203,6 +286,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
     setState(() {
       _pinLat = result.latitude;
       _pinLng = result.longitude;
+      _error = null;
       if (result.address.trim().isNotEmpty) {
         _location.text = result.address.trim();
       }
@@ -221,6 +305,11 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
 
   Future<void> _submit() async {
     if (_busy) return;
+    if (!Item.validPosition(_pinLat, _pinLng)) {
+      _moveTo(1);
+      setState(() => _error = '請先確認地圖位置。');
+      return;
+    }
     if (!_acceptedTerms) {
       setState(() => _error = '請先閱讀並同意刊登規範。');
       return;
@@ -242,9 +331,9 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         setState(() => _progress = '正在處理照片 ${index + 1} / ${_photos.length}…');
         try {
           photo.url = await upload.uploadImageBytes(
-            photo.bytes,
-            filename: photo.file.name,
-            mimeType: photo.file.mimeType,
+            photo.bytes!,
+            filename: photo.file!.name,
+            mimeType: photo.file!.mimeType,
           );
         } on UploadRejected catch (rejected) {
           if (!mounted) return;
@@ -258,11 +347,17 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           return;
         }
       }
-      setState(() => _progress = _isMock ? '正在建立體驗刊登…' : '正在發布…');
+      setState(
+        () => _progress = _editing
+            ? '正在儲存修改…'
+            : _isMock
+            ? '正在建立體驗刊登…'
+            : '正在發布…',
+      );
       final now = DateTime.now();
       final user = ref.read(authProvider).user;
       final draft = Item(
-        id: '',
+        id: widget.editing?.id ?? '',
         type: _type,
         userId: user?.id ?? '',
         title: _title.text.trim(),
@@ -273,19 +368,27 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         latitude: _pinLat ?? 0,
         longitude: _pinLng ?? 0,
         locationName: _location.text.trim(),
-        lostAt: _date,
+        lostAt: _editing && DateUtils.isSameDay(widget.editing!.lostAt, _date)
+            ? widget.editing!.lostAt
+            : _date,
         storageLocation: _isFound
             ? (_custody == '自行保管' ? _custody : _storage.text.trim())
             : '',
         handedToPolice: _isFound && _custody == '已交給警察機關',
+        reward: widget.editing?.reward ?? 0,
+        hasReward: widget.editing?.hasReward ?? false,
         createdAt: now,
         updatedAt: now,
       );
-      final created = await ref.read(createItemProvider.notifier).submit(draft);
+      final created = _editing
+          ? await ref.read(itemRepositoryProvider).update(draft)
+          : await ref.read(createItemProvider.notifier).submit(draft);
       if (!mounted) return;
       if (created == null) {
         setState(
-          () => _error = _publishError(ref.read(createItemProvider).error),
+          () => _error = _editing
+              ? '尚未儲存修改，請重試。'
+              : _publishError(ref.read(createItemProvider).error),
         );
         return;
       }
@@ -301,22 +404,53 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         if (!mounted) return;
       }
       ref.invalidate(collectionProvider(false));
-      ref.invalidate(itemDetailProvider(created.id));
+      ref.invalidate(collectionProvider(true));
+      if (!_editing) ref.invalidate(itemDetailProvider(created.id));
       ref.invalidate(itemsProvider);
+      ref.invalidate(mapItemsProvider);
       ref.invalidate(itemStatsProvider);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_isMock ? '體驗刊登已建立，僅在此裝置顯示。' : '刊登已發布，可以隨時回來更新資訊。'),
+          content: Text(
+            _editing
+                ? '刊登已更新。'
+                : _isMock
+                ? '體驗刊登已建立，僅在此裝置顯示。'
+                : '刊登已發布，可以隨時回來更新資訊。',
+          ),
           backgroundColor: AppColors.textPrimary,
           behavior: SnackBarBehavior.floating,
         ),
       );
-      context.go('/item/${created.id}', extra: created);
-    } catch (_) {
-      if (mounted) setState(() => _error = '暫時無法發布。你的資料已保留，請稍後重試。');
+      if (_editing && context.canPop()) {
+        setState(() => _allowExit = true);
+        await WidgetsBinding.instance.endOfFrame;
+        if (mounted) context.pop(created);
+      } else {
+        context.go('/item/${created.id}', extra: created);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = _editing
+              ? (error is DioException && error.response?.statusCode == 401
+                    ? '登入已逾時，請重新登入後再儲存。'
+                    : _editError(error))
+              : _publishError(error),
+        );
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  String _editError(Object? error) {
+    final status = error is DioException ? error.response?.statusCode ?? 0 : 0;
+    final message = apiErrorMessage(error);
+    if (status >= 400 && status < 500 && message != null) {
+      return '$message。輸入已保留，修改後再儲存。';
+    }
+    return '修改尚未儲存。輸入已保留，請檢查連線後重試。';
   }
 
   String _publishError(Object? error) {
@@ -336,17 +470,28 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
   Widget build(BuildContext context) {
     final isMock = ref.watch(useMockProvider);
     final loggedIn = isMock || ref.watch(authProvider).isLoggedIn;
+    if (_editing &&
+        (widget.editing!.status != ItemStatus.active ||
+            widget.editing!.userId !=
+                (isMock ? 'me' : ref.watch(authProvider).user?.id))) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('編輯刊登')),
+        body: const Center(child: Text('只有發布者可以編輯尚未結束的刊登。')),
+      );
+    }
     final label = _busy
         ? (_openingLogin ? '前往登入…' : _progress)
         : _step < 2
         ? (_step == 0 ? '下一步：地點與時間' : '下一步：確認內容')
         : !loggedIn
         ? '登入後發布'
+        : _editing
+        ? '儲存修改'
         : isMock
         ? '建立體驗刊登'
         : '確認發布';
     return PopScope<Object?>(
-      canPop: _step == 0 && !_busy,
+      canPop: _allowExit || (!_editing && _step == 0 && !_busy),
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop && !_busy) _back();
       },
@@ -506,7 +651,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
   );
 
   Widget _header() {
-    const steps = ['物品資訊', '地點時間', '確認發布'];
+    final steps = ['物品資訊', '地點時間', _editing ? '確認修改' : '確認發布'];
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 6, 20, 14),
       decoration: const BoxDecoration(
@@ -518,7 +663,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           Row(
             children: [
               IconButton(
-                tooltip: _step == 0 ? '返回探索' : '回到上一步',
+                tooltip: _step == 0 ? (_editing ? '返回原刊登' : '返回探索') : '回到上一步',
                 onPressed: _busy ? null : _back,
                 icon: const Icon(
                   Icons.arrow_back_rounded,
@@ -526,10 +671,10 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
                 ),
               ),
               const SizedBox(width: 2),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  '建立刊登',
-                  style: TextStyle(
+                  _editing ? '編輯刊登' : '建立刊登',
+                  style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
@@ -611,6 +756,18 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 撿到的物品若掛著 FOUND !T 防丟牌，掃描就能直接聯絡物主，不必刊登。
+        AnimatedSize(
+          duration: AppMotion.of(context, AppMotion.base),
+          curve: AppMotion.curve,
+          alignment: Alignment.topCenter,
+          child: _isFound && !_editing
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 20),
+                  child: _scanTagHint(),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
         const _StepHeading('物品資訊', '新增照片，讓物品更容易被認出。'),
         const _FieldLabel('物品照片', optional: true),
         _photoPicker(),
@@ -628,27 +785,34 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           child: Divider(height: 1, color: AppColors.divider),
         ),
         const _FieldLabel('刊登類型'),
-        Row(
-          children: [
-            Expanded(
-              child: _typeOption(ItemType.lost, Icons.search_rounded, '我遺失了物品'),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _typeOption(
-                ItemType.found,
-                Icons.volunteer_activism_outlined,
-                '我撿到了物品',
+        if (_editing)
+          Text('${_type.label}（刊登後無法變更類型）')
+        else
+          Row(
+            children: [
+              Expanded(
+                child: _typeOption(
+                  ItemType.lost,
+                  Icons.search_rounded,
+                  '我遺失了物品',
+                ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _typeOption(
+                  ItemType.found,
+                  Icons.volunteer_activism_outlined,
+                  '我撿到了物品',
+                ),
+              ),
+            ],
+          ),
         const SizedBox(height: 24),
         const _FieldLabel('物品名稱'),
         TextFormField(
           key: const ValueKey('publish-title'),
           controller: _title,
-          maxLength: 80,
+          maxLength: _editing ? 100 : 80,
           textInputAction: TextInputAction.next,
           style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
           decoration: _decoration('例如：深棕色皮夾、銀色鑰匙圈'),
@@ -703,7 +867,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           controller: _description,
           minLines: 3,
           maxLines: 5,
-          maxLength: 500,
+          maxLength: _editing ? 2000 : 500,
           style: const TextStyle(
             color: AppColors.textPrimary,
             fontSize: 15,
@@ -712,6 +876,72 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           decoration: _decoration('品牌、外觀或明顯特徵。保留一個只有失主知道的細節，供私下核對。'),
         ),
       ],
+    ),
+  );
+
+  /// 撿到模式的小提示：整張卡片可點，直接開啟防丟牌掃描。保持低調，不搶表單焦點。
+  Widget _scanTagHint() => Pressable(
+    key: const ValueKey('found-scan-hint'),
+    onTap: () => context.push('/qr/scan'),
+    semanticLabel: '掃描防丟牌',
+    child: Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 56),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary50,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.qr_code_scanner_rounded,
+              color: AppColors.primary,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '物品上有 FOUND !T 防丟牌？',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    height: 1.4,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  '直接掃描，就能傳訊息給物主，不必刊登。',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 4),
+          const Icon(
+            Icons.chevron_right_rounded,
+            color: AppColors.primary,
+            size: 22,
+          ),
+        ],
+      ),
     ),
   );
 
@@ -836,20 +1066,26 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(14),
-                child: Image.memory(
-                  photo.bytes,
-                  width: 100,
-                  height: 100,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox(
-                    width: 100,
-                    height: 100,
-                    child: Icon(
-                      Icons.broken_image_outlined,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ),
+                child: photo.bytes == null
+                    ? SizedBox(
+                        width: 100,
+                        height: 100,
+                        child: ItemPhoto(photo.url),
+                      )
+                    : Image.memory(
+                        photo.bytes!,
+                        width: 100,
+                        height: 100,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox(
+                          width: 100,
+                          height: 100,
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
               ),
               if (index == 0)
                 Positioned(
@@ -899,13 +1135,14 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
               borderRadius: BorderRadius.circular(14),
               child: Container(
                 width: 100,
-                height: 100,
+                constraints: const BoxConstraints(minHeight: 100),
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   border: Border.all(color: AppColors.primary200),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (_picking)
@@ -953,7 +1190,11 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
         TextFormField(
           key: const ValueKey('publish-location'),
           controller: _location,
-          maxLength: 150,
+          onChanged: (_) => setState(() {
+            _pinLat = null;
+            _pinLng = null;
+          }),
+          maxLength: 200,
           style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
           decoration: _decoration('例如：台北市中山區・雙連站 1 號出口').copyWith(
             prefixIcon: const Icon(
@@ -965,7 +1206,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
               (value ?? '').trim().isEmpty ? '請填寫地點，讓附近的人更容易找到。' : null,
         ),
         const Text(
-          '填寫大概區域與附近地標即可，避免公開私人住址。',
+          '填寫地名後，請在地圖上確認大概位置。可選附近路口或地標，避免公開私人住址。',
           style: TextStyle(
             color: AppColors.textSecondary,
             fontSize: 12,
@@ -977,7 +1218,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
           child: TextButton.icon(
             onPressed: _pickOnMap,
             icon: const Icon(Icons.add_location_alt_outlined),
-            label: Text(_pinLat == null ? '在地圖上標示位置' : '已標示地圖位置，可重新選擇'),
+            label: Text(_pinLat == null ? '確認地圖位置（必填）' : '已標示地圖位置，可重新選擇'),
           ),
         ),
         const SizedBox(height: 28),
@@ -1039,7 +1280,7 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
             TextFormField(
               key: const ValueKey('publish-storage'),
               controller: _storage,
-              maxLength: 100,
+              maxLength: _editing ? 200 : 100,
               decoration: _decoration(
                 _custody == '已交給警察機關' ? '例如：中山一派出所' : '例如：雙連站服務台',
               ),
@@ -1108,7 +1349,10 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
   Widget _reviewStep(bool loggedIn) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const _StepHeading('確認刊登內容', '確認物品資訊後，即可完成刊登。'),
+      _StepHeading(
+        _editing ? '確認修改內容' : '確認刊登內容',
+        _editing ? '儲存後會更新原本刊登，已有對話保持不變。' : '確認物品資訊後，即可完成刊登。',
+      ),
       Container(
         width: double.infinity,
         padding: const EdgeInsets.all(22),
@@ -1183,16 +1427,22 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
                   separatorBuilder: (_, __) => const SizedBox(width: 10),
                   itemBuilder: (_, index) => ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.memory(
-                      _photos[index].bytes,
-                      width: 110,
-                      height: 110,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const SizedBox(
-                        width: 110,
-                        child: Icon(Icons.broken_image_outlined),
-                      ),
-                    ),
+                    child: _photos[index].bytes == null
+                        ? SizedBox(
+                            width: 110,
+                            height: 110,
+                            child: ItemPhoto(_photos[index].url),
+                          )
+                        : Image.memory(
+                            _photos[index].bytes!,
+                            width: 110,
+                            height: 110,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox(
+                              width: 110,
+                              child: Icon(Icons.broken_image_outlined),
+                            ),
+                          ),
                   ),
                 ),
               ),
@@ -1306,8 +1556,9 @@ class _AddItemScreenState extends ConsumerState<AddItemScreen> {
 
 class _DraftPhoto {
   _DraftPhoto(this.file, this.bytes);
-  final XFile file;
-  final Uint8List bytes;
+  _DraftPhoto.existing(this.url) : file = null, bytes = null;
+  final XFile? file;
+  final Uint8List? bytes;
   String? url;
 }
 

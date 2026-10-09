@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
@@ -10,10 +11,18 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../../core/utils/qr_tag_image.dart';
+import '../../../data/api/api_client.dart';
 import '../../../data/models/qr_item.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/qr_provider.dart';
+
+/// 表單關閉時的結果：[tag] 是建立或儲存後的最新資料；[gone] 表示這張防丟牌已不存在（404）。
+typedef _SheetResult = ({QrItemModel? tag, bool gone});
+
+/// 伺服器回 404：防丟牌已被移除或不存在。
+bool _isGone(Object error) =>
+    error is DioException && error.response?.statusCode == 404;
 
 class QrScreen extends ConsumerStatefulWidget {
   const QrScreen({super.key});
@@ -24,6 +33,8 @@ class QrScreen extends ConsumerStatefulWidget {
 class _QrScreenState extends ConsumerState<QrScreen> {
   String? _selectedId;
   final Set<String> _deletingIds = {};
+  // 已移除的防丟牌：即使重新載入的清單仍帶著（例如後端尚未同步），也不再顯示。
+  final Set<String> _removedIds = {};
 
   Future<void> _refresh() async {
     try {
@@ -34,22 +45,52 @@ class _QrScreenState extends ConsumerState<QrScreen> {
     }
   }
 
+  Future<_SheetResult?> _openSheet(bool isDemo, {QrItemModel? editing}) =>
+      showModalBottomSheet<_SheetResult>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: AppColors.background,
+        constraints: const BoxConstraints(maxWidth: 720),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        builder: (_) => _CreateTagSheet(isDemo: isDemo, editing: editing),
+      );
+
   Future<void> _create(bool isDemo) async {
-    final created = await showModalBottomSheet<QrItemModel>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: AppColors.background,
-      constraints: const BoxConstraints(maxWidth: 720),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (_) => _CreateTagSheet(isDemo: isDemo),
-    );
+    final created = (await _openSheet(isDemo))?.tag;
     if (!mounted || created == null) return;
     setState(() => _selectedId = created.id);
     ref.invalidate(myQrItemsProvider);
     AppSnackbar.success(context, isDemo ? '已新增示範防丟牌' : '防丟牌已建立');
+  }
+
+  /// 修改名稱與備註；QR 內容不變，已列印的貼紙照常可用。
+  Future<void> _edit(QrItemModel tag, bool isDemo) async {
+    final result = await _openSheet(isDemo, editing: tag);
+    if (!mounted || result == null) return;
+    final updated = result.tag;
+    if (result.gone || updated == null) {
+      _forget(tag.id);
+      ref.invalidate(myQrItemsProvider);
+      AppSnackbar.error(context, '這張防丟牌已不存在，清單已重新整理。');
+      return;
+    }
+    // 直接換上伺服器回傳的版本；清單還沒載入時才重新抓。
+    if (!ref.read(myQrItemsProvider.notifier).replace(updated)) {
+      ref.invalidate(myQrItemsProvider);
+    }
+    AppSnackbar.success(context, '已儲存變更');
+  }
+
+  /// 立刻從畫面拿掉這張防丟牌；正在檢視它的話改回第一張。
+  void _forget(String id) {
+    ref.read(myQrItemsProvider.notifier).drop(id);
+    setState(() {
+      _removedIds.add(id);
+      if (_selectedId == id) _selectedId = null;
+    });
   }
 
   Future<void> _remove(QrItemModel tag, bool isDemo) async {
@@ -80,18 +121,24 @@ class _QrScreenState extends ConsumerState<QrScreen> {
     );
     if (confirmed != true || !mounted) return;
     setState(() => _deletingIds.add(tag.id));
+    var removed = false;
     try {
       await ref.read(qrRepositoryProvider).remove(tag.id);
-      ref.invalidate(myQrItemsProvider);
-      if (mounted) {
-        if (_selectedId == tag.id) setState(() => _selectedId = null);
-        AppSnackbar.success(context, '已移除防丟牌');
-      }
-    } catch (_) {
-      if (mounted) AppSnackbar.error(context, '未能移除，請稍後再試。');
-    } finally {
-      if (mounted) setState(() => _deletingIds.remove(tag.id));
+      removed = true;
+    } catch (error) {
+      // 404 表示這張防丟牌早已不存在，結果與移除相同。
+      removed = _isGone(error);
     }
+    if (!mounted) return;
+    setState(() => _deletingIds.remove(tag.id));
+    if (!removed) {
+      AppSnackbar.error(context, '未能移除，請稍後再試。');
+      return;
+    }
+    // 先從畫面拿掉，不等重新載入；再向伺服器同步清單。
+    _forget(tag.id);
+    ref.invalidate(myQrItemsProvider);
+    AppSnackbar.success(context, '已移除防丟牌');
   }
 
   @override
@@ -172,7 +219,7 @@ class _QrScreenState extends ConsumerState<QrScreen> {
                         const _Notice(
                           icon: Icons.visibility_outlined,
                           title: '示範 QR，尚未連結公開認領服務',
-                          description: '可體驗新增、切換與移除。示範資料只在本次執行保留，請勿用於實際防丟。',
+                          description: '可體驗新增、編輯、切換與移除。示範資料只在本次執行保留，請勿用於實際防丟。',
                         ),
                         const SizedBox(height: 24),
                       ],
@@ -200,7 +247,11 @@ class _QrScreenState extends ConsumerState<QrScreen> {
                             actionLabel: '重新載入',
                             onAction: () => ref.invalidate(myQrItemsProvider),
                           ),
-                          data: (items) {
+                          data: (all) {
+                            final items = [
+                              for (final item in all)
+                                if (!_removedIds.contains(item.id)) item,
+                            ];
                             if (items.isEmpty) {
                               return _EmptyCard(
                                 title: '從一件重要的小物開始',
@@ -217,7 +268,13 @@ class _QrScreenState extends ConsumerState<QrScreen> {
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _QrPreview(tag: selected, isDemo: isDemo),
+                                _QrPreview(
+                                  tag: selected,
+                                  isDemo: isDemo,
+                                  onEdit: _deletingIds.contains(selected.id)
+                                      ? null
+                                      : () => _edit(selected, isDemo),
+                                ),
                                 const SizedBox(height: 28),
                                 Row(
                                   children: [
@@ -278,9 +335,10 @@ class _QrScreenState extends ConsumerState<QrScreen> {
 }
 
 class _QrPreview extends StatelessWidget {
-  const _QrPreview({required this.tag, required this.isDemo});
+  const _QrPreview({required this.tag, required this.isDemo, this.onEdit});
   final QrItemModel tag;
   final bool isDemo;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -306,6 +364,7 @@ class _QrPreview extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             tag.name,
+            key: const ValueKey('qr-preview-name'),
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontSize: 23,
@@ -314,7 +373,25 @@ class _QrPreview extends StatelessWidget {
               color: AppColors.textPrimary,
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 14),
+          _TagNote(description: tag.description),
+          const SizedBox(height: 6),
+          // 建立後仍可修改名稱與備註；QR 內容不變。
+          Tooltip(
+            message: '編輯防丟牌',
+            child: TextButton.icon(
+              key: const ValueKey('qr-edit'),
+              onPressed: onEdit,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                minimumSize: const Size(48, 48),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+              ),
+              icon: const Icon(Icons.edit_outlined, size: 19),
+              label: const Text('編輯名稱與備註'),
+            ),
+          ),
+          const SizedBox(height: 18),
           if (data.trim().isEmpty)
             const Padding(
               padding: EdgeInsets.all(24),
@@ -361,22 +438,53 @@ class _QrPreview extends StatelessWidget {
               color: AppColors.textSecondary,
             ),
           ),
-          if (tag.description.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              tag.description,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                height: 1.6,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
           if (!isDemo && data.trim().isNotEmpty) ...[
             const SizedBox(height: 24),
             _QrActions(key: ValueKey('qr-actions-${tag.id}'), tag: tag),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 防丟牌的備註（物品特徵）；未填寫時提示可以補上。
+class _TagNote extends StatelessWidget {
+  const _TagNote({required this.description});
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    final empty = description.trim().isEmpty;
+    return Container(
+      key: const ValueKey('qr-preview-note'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '備註',
+            style: TextStyle(
+              fontSize: 12,
+              letterSpacing: 1,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            empty ? '尚未填寫。可以補上顏色、吊飾等特徵，方便辨認。' : description,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.6,
+              color: empty ? AppColors.textSecondary : AppColors.textPrimary,
+            ),
+          ),
         ],
       ),
     );
@@ -556,6 +664,19 @@ class _TagRow extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (tag.description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        tag.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.5,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Text(
                       '${DateFormat('yyyy.MM.dd').format(tag.createdAt)} 建立',
@@ -716,19 +837,32 @@ class _EmptyCard extends StatelessWidget {
   );
 }
 
+/// 新增防丟牌；帶入 [editing] 時改為編輯名稱與備註（QR 內容不變）。
 class _CreateTagSheet extends ConsumerStatefulWidget {
-  const _CreateTagSheet({required this.isDemo});
+  const _CreateTagSheet({required this.isDemo, this.editing});
   final bool isDemo;
+  final QrItemModel? editing;
   @override
   ConsumerState<_CreateTagSheet> createState() => _CreateTagSheetState();
 }
 
 class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _name = TextEditingController();
-  final _description = TextEditingController();
+  late final TextEditingController _name;
+  late final TextEditingController _description;
   bool _saving = false;
   String? _error;
+
+  bool get _isEdit => widget.editing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.editing?.name ?? '');
+    _description = TextEditingController(
+      text: widget.editing?.description ?? '',
+    );
+  }
 
   @override
   void dispose() {
@@ -737,23 +871,53 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
     super.dispose();
   }
 
+  /// 伺服器的 4xx 訊息（例如名稱含電話或 Email）可直接顯示；其他情況給通用說明。
+  String _failure(Object error) {
+    final status = error is DioException ? error.response?.statusCode ?? 0 : 0;
+    final message = apiErrorMessage(error);
+    if (status >= 400 && status < 500 && status != 401 && message != null) {
+      final reason = message.replaceFirst(RegExp(r'[。.！!]+$'), '');
+      return '$reason。你的輸入已保留，修改後再試一次。';
+    }
+    return _isEdit ? '暫時無法儲存變更。你的輸入已保留，請再試一次。' : '暫時無法建立。你的輸入已保留，請再試一次。';
+  }
+
   Future<void> _submit() async {
     if (_saving || !_formKey.currentState!.validate()) return;
+    final name = _name.text.trim();
+    final description = _description.text.trim();
+    final editing = widget.editing;
+    // 沒有修改就直接關閉，不必送出。
+    if (editing != null &&
+        name == editing.name &&
+        description == editing.description) {
+      Navigator.pop(context);
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;
     });
+    final repository = ref.read(qrRepositoryProvider);
     try {
-      final item = await ref
-          .read(qrRepositoryProvider)
-          .generate(
-            name: _name.text.trim(),
-            description: _description.text.trim(),
-          );
-      ref.invalidate(myQrItemsProvider);
-      if (mounted) Navigator.pop(context, item);
-    } catch (_) {
-      if (mounted) setState(() => _error = '暫時無法建立。你的輸入已保留，請再試一次。');
+      final item = editing == null
+          ? await repository.generate(name: name, description: description)
+          : await repository.update(
+              editing.id,
+              name: name,
+              description: description,
+            );
+      if (editing == null) ref.invalidate(myQrItemsProvider);
+      if (mounted) {
+        Navigator.pop<_SheetResult>(context, (tag: item, gone: false));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (editing != null && _isGone(error)) {
+        Navigator.pop<_SheetResult>(context, (tag: null, gone: true));
+      } else {
+        setState(() => _error = _failure(error));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -776,7 +940,11 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
                 children: [
                   Expanded(
                     child: Text(
-                      widget.isDemo ? '新增示範防丟牌' : '新增防丟牌',
+                      _isEdit
+                          ? '編輯防丟牌'
+                          : widget.isDemo
+                          ? '新增示範防丟牌'
+                          : '新增防丟牌',
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w700,
@@ -792,7 +960,9 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
               ),
               const SizedBox(height: 8),
               Text(
-                widget.isDemo
+                _isEdit
+                    ? '名稱與備註會顯示在掃描結果中，方便撿到的人確認物品。'
+                    : widget.isDemo
                     ? '替物品命名，體驗專屬 QR。示範不會啟用公開認領服務。'
                     : '以物品名稱與特徵，辨認每一張防丟牌。',
                 style: const TextStyle(
@@ -801,12 +971,24 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
                   color: AppColors.textSecondary,
                 ),
               ),
+              if (_isEdit) ...[
+                const SizedBox(height: 16),
+                _Notice(
+                  icon: Icons.qr_code_2_rounded,
+                  title: 'QR 內容不會改變',
+                  description: widget.isDemo
+                      ? '示範 QR 不受影響。'
+                      : '已列印或貼上的防丟牌可以繼續使用，掃描後會顯示新的名稱與備註。',
+                ),
+              ],
               const SizedBox(height: 24),
               TextFormField(
+                key: const ValueKey('qr-sheet-name'),
                 controller: _name,
-                autofocus: true,
+                autofocus: !_isEdit,
                 enabled: !_saving,
-                maxLength: 50,
+                // 編輯時放寬到後端上限，避免截斷既有名稱。
+                maxLength: _isEdit ? 100 : 50,
                 textInputAction: TextInputAction.next,
                 validator: (value) =>
                     (value ?? '').trim().isEmpty ? '請輸入物品名稱' : null,
@@ -817,13 +999,14 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
               ),
               const SizedBox(height: 8),
               TextFormField(
+                key: const ValueKey('qr-sheet-description'),
                 controller: _description,
                 enabled: !_saving,
-                maxLength: 200,
+                maxLength: _isEdit ? 500 : 200,
                 minLines: 2,
                 maxLines: 3,
                 decoration: const InputDecoration(
-                  labelText: '物品特徵（選填）',
+                  labelText: '備註（選填）',
                   hintText: '例如：米色，提把有一枚綠色吊飾',
                 ),
               ),
@@ -837,12 +1020,16 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 16),
-                Text(
-                  _error!,
-                  style: const TextStyle(
-                    color: AppColors.error,
-                    fontSize: 14,
-                    height: 1.5,
+                // 表單會蓋住頁面底部的提示列，錯誤直接顯示在表單內。
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
                   ),
                 ),
               ],
@@ -863,10 +1050,15 @@ class _CreateTagSheetState extends ConsumerState<_CreateTagSheet> {
                           color: AppColors.primary,
                         ),
                       )
-                    : const Icon(Icons.qr_code_rounded, size: 20),
+                    : Icon(
+                        _isEdit ? Icons.check_rounded : Icons.qr_code_rounded,
+                        size: 20,
+                      ),
                 label: Text(
                   _saving
-                      ? '正在建立…'
+                      ? (_isEdit ? '正在儲存…' : '正在建立…')
+                      : _isEdit
+                      ? '儲存變更'
                       : widget.isDemo
                       ? '建立示範 QR'
                       : '建立 QR 防丟牌',

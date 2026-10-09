@@ -4,11 +4,12 @@ import '../mock/mock_items.dart';
 
 abstract class ChatRepository {
   Future<List<Chat>> list();
+  Future<Chat?> detail(String chatId);
   Future<Chat?> createChat({required String itemId});
 
   /// 掃到防丟牌後直接聯絡物主；物主本人、已撤銷或被封鎖時後端會拒絕。
   Future<Chat?> createChatForTag({required String qrCode});
-  Future<List<Message>> messages(String chatId, {int page = 1});
+  Future<List<Message>> messages(String chatId, {int page = 1, String? before});
   Future<Message?> send({
     required String chatId,
     required String content,
@@ -70,6 +71,10 @@ class MockChatRepository implements ChatRepository {
   }
 
   @override
+  Future<Chat?> detail(String chatId) async =>
+      _chats.where((c) => c.id == chatId).firstOrNull;
+
+  @override
   Future<Chat?> createChat({required String itemId}) async {
     await Future.delayed(const Duration(milliseconds: 250));
     final existing = _chats.where((c) => c.itemId == itemId).toList();
@@ -93,9 +98,13 @@ class MockChatRepository implements ChatRepository {
   }
 
   @override
-  Future<List<Message>> messages(String chatId, {int page = 1}) async {
+  Future<List<Message>> messages(
+    String chatId, {
+    int page = 1,
+    String? before,
+  }) async {
     await Future.delayed(const Duration(milliseconds: 300));
-    return _messages.putIfAbsent(
+    final history = _messages.putIfAbsent(
       chatId,
       () => [
         Message(
@@ -118,6 +127,11 @@ class MockChatRepository implements ChatRepository {
         ),
       ],
     );
+    final end = before == null
+        ? history.length
+        : history.indexWhere((m) => m.id == before);
+    if (end < 0) return [];
+    return history.sublist((end - 50).clamp(0, end), end);
   }
 
   @override
@@ -138,8 +152,8 @@ class MockChatRepository implements ChatRepository {
       createdAt: DateTime.now(),
       clientMessageId: clientMessageId ?? '',
     );
-    final history = await messages(chatId);
-    history.add(msg);
+    await messages(chatId);
+    _messages[chatId]!.add(msg);
     final index = _chats.indexWhere((c) => c.id == chatId);
     if (index >= 0) {
       _chats[index] = _updated(
@@ -163,19 +177,18 @@ class MockChatRepository implements ChatRepository {
     String? lastMessage,
     DateTime? lastMessageAt,
     int? unreadCount,
-  }) =>
-      Chat(
-        id: c.id,
-        itemId: c.itemId,
-        itemTitle: c.itemTitle,
-        itemImage: c.itemImage,
-        participants: c.participants,
-        otherUserName: c.otherUserName,
-        otherUserAvatar: c.otherUserAvatar,
-        lastMessage: lastMessage ?? c.lastMessage,
-        lastMessageAt: lastMessageAt ?? c.lastMessageAt,
-        unreadCount: unreadCount ?? c.unreadCount,
-      );
+  }) => Chat(
+    id: c.id,
+    itemId: c.itemId,
+    itemTitle: c.itemTitle,
+    itemImage: c.itemImage,
+    participants: c.participants,
+    otherUserName: c.otherUserName,
+    otherUserAvatar: c.otherUserAvatar,
+    lastMessage: lastMessage ?? c.lastMessage,
+    lastMessageAt: lastMessageAt ?? c.lastMessageAt,
+    unreadCount: unreadCount ?? c.unreadCount,
+  );
 
   @override
   Future<int> unreadTotal() async {
@@ -194,6 +207,13 @@ class RemoteChatRepository implements ChatRepository {
     return list
         .map((e) => Chat.fromJson(e as Map<String, dynamic>))
         .toList(growable: false);
+  }
+
+  @override
+  Future<Chat?> detail(String chatId) async {
+    final res = await _api.get<Map<String, dynamic>>('/chats/$chatId');
+    final data = res.data?['data'] as Map<String, dynamic>?;
+    return data == null ? null : Chat.fromJson(data);
   }
 
   @override
@@ -217,10 +237,18 @@ class RemoteChatRepository implements ChatRepository {
   }
 
   @override
-  Future<List<Message>> messages(String chatId, {int page = 1}) async {
+  Future<List<Message>> messages(
+    String chatId, {
+    int page = 1,
+    String? before,
+  }) async {
     final res = await _api.get<Map<String, dynamic>>(
       '/chats/$chatId/messages',
-      query: {'page': page, 'page_size': 50},
+      query: {
+        'limit': 50,
+        if (before != null) 'before': before,
+        if (before == null) 'page': page,
+      },
     );
     final list = (res.data?['data'] as List?) ?? const [];
     return list

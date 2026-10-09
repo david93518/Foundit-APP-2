@@ -48,13 +48,13 @@ class PushNotifications {
     if (!supported || _ready) return;
     final options = _options();
     if (defaultTargetPlatform == TargetPlatform.iOS && options == null) {
-      debugPrint('推播停用：iOS build 未帶入 FIREBASE_IOS_API_KEY / FIREBASE_IOS_APP_ID');
+      if (kDebugMode) debugPrint('推播停用：iOS build 未帶入 FIREBASE_IOS_API_KEY / FIREBASE_IOS_APP_ID');
       return;
     }
     try {
       await Firebase.initializeApp(options: options);
     } catch (error) {
-      debugPrint('推播停用：Firebase 未設定（$error）');
+      if (kDebugMode) debugPrint('推播停用：Firebase 未設定（$error）');
       return;
     }
     _ready = true;
@@ -93,7 +93,7 @@ class PushNotifications {
         if (_registeredFor != null) unawaited(_upload(next).catchError((_) {}));
       });
     } catch (error) {
-      debugPrint('推播註冊失敗：$error');
+      if (kDebugMode) debugPrint('推播註冊失敗：$error');
     }
   }
 

@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ID = re.compile(r"[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com\Z")
 FIREBASE_API_KEY = re.compile(r"AIza[0-9A-Za-z_-]{35}\Z")
 FIREBASE_IOS_APP_ID = re.compile(r"[0-9]+:[0-9]+:ios:[0-9a-f]+\Z")
+# Must match ios/Runner/*.entitlements and the backend's apple-app-site-association.
+LINK_HOST = "api.foundit.tw"
 
 
 def validate(args):
@@ -75,7 +77,8 @@ def main():
         f"GOOGLE_REVERSED_CLIENT_ID = {'.'.join(reversed(args.ios_client_id.split('.')))}\n"
         # The push entitlement is only signed in when push is configured, so a
         # build without Firebase never needs the Push capability on the App ID.
-        + ("CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements\n" if push else ""),
+        # Both files carry the Universal Links domain (Associated Domains capability).
+        + f"CODE_SIGN_ENTITLEMENTS = Runner/{'Runner' if push else 'RunnerLinks'}.entitlements\n",
         encoding="utf-8",
     )
     config = ROOT / "build/real-ios-defines.json"
@@ -93,10 +96,15 @@ def main():
     print("Native callback and real API build configuration generated.")
     print("Push notifications: " + ("enabled (Firebase iOS app + push entitlement)." if push
           else "DISABLED - pass --firebase-ios-api-key and --firebase-ios-app-id to enable."))
+    if urlparse(origin).hostname != LINK_HOST:
+        print(f"WARNING: entitlements declare applinks:{LINK_HOST}; "
+              "QR stickers on another host will open Safari, not the app.")
     print("This does not verify DNS, HTTPS reachability, OAuth ownership or real login.")
     if not args.configure_only:
         subprocess.run([
             args.flutter, "build", "ipa", "--release",
+            # Dart symbols are obfuscated; keep build/debug-info to symbolicate crash stacks.
+            "--obfuscate", "--split-debug-info=build/debug-info",
             f"--build-number={args.build_number}",
             f"--dart-define-from-file={config}",
         ], cwd=ROOT, check=True)

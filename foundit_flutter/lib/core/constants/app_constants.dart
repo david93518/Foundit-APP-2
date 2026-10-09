@@ -14,24 +14,34 @@ class AppConstants {
   ///
   /// 上線版本可透過 build flag 注入，例如：
   /// ```
-  /// flutter build apk --dart-define=API_BASE_URL=https://api.foundit.com.tw/api/v1 \
-  ///                   --dart-define=SOCKET_HOST=https://api.foundit.com.tw
+  /// flutter build apk --dart-define=API_BASE_URL=https://api.foundit.tw/api/v1 \
+  ///                   --dart-define=SOCKET_HOST=https://api.foundit.tw
   /// ```
-  /// 沒注入時的 fallback：
-  /// - Android 模擬器：10.0.2.2 指向主機 localhost
-  /// - iOS 模擬器 / Web：localhost
-  /// - 實機測試：改成電腦 IP
-  /// 實機測試：把 192.168.x.x 改成你電腦在區域網路的實際 IP
-  /// 上線版本透過 --dart-define=API_BASE_URL=https://... 注入
+  /// 沒注入時一律連正式 HTTPS。本機開發請明確注入，例如 Android 模擬器用
+  /// `--dart-define=API_BASE_URL=http://10.0.2.2:3000/api/v1`。
+  /// Dart 的 HTTP／Socket 不受 iOS ATS 與 Android cleartext 設定保護：
+  /// 預設值若是 http，忘了注入的建置會把 token 以明文送給區網上的任何主機。
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://192.168.1.100:3000/api/v1',
+    defaultValue: 'https://api.foundit.tw/api/v1',
   );
 
   static const String socketHost = String.fromEnvironment(
     'SOCKET_HOST',
-    defaultValue: 'http://192.168.1.100:3000',
+    defaultValue: 'https://api.foundit.tw',
   );
+
+  /// release 建置只允許 HTTPS；本機 loopback 與 Android 模擬器的 10.0.2.2 例外，供開發驗證。
+  static void assertSecureTransport({required bool release}) {
+    if (!release || useMock) return;
+    for (final value in [baseUrl, socketHost]) {
+      final uri = Uri.parse(value);
+      final local = const {'localhost', '127.0.0.1', '10.0.2.2'}.contains(uri.host);
+      if (uri.scheme != 'https' && !local) {
+        throw StateError('release 建置必須使用 HTTPS：$value');
+      }
+    }
+  }
   static const String socketChatNamespace = '/chat';
 
   /// 是否在登入頁提供手機驗證碼登入（後端需設定 OTP_DRIVER 簡訊供應商）。

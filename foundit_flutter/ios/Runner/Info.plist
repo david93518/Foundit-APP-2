@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -28,6 +30,8 @@
 	<string>$(GOOGLE_IOS_CLIENT_ID)</string>
 	<key>GIDServerClientID</key>
 	<string>$(GOOGLE_WEB_CLIENT_ID)</string>
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -36,6 +40,17 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+		<!-- 防丟牌落地頁的「在 App 開啟」按鈕：foundit://qr/<code>。App 只接受這一種路徑（lib/core/services/tag_links.dart）。 -->
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>tw.foundit.tag</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>foundit</string>
 			</array>
 		</dict>
 	</array>
@@ -79,11 +94,6 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>FOUND !T 使用你的位置在地圖上定位，協助查看周邊物品資訊。</string>
 
-	<!-- 開發階段允許 cleartext HTTP（連線到 localhost / 內網後端）；正式上架請改用 HTTPS 並移除此設定 -->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
+	<!-- 不設 ATS 例外：App 的 API 與 Socket 走 Dart 自己的連線，release 版另有只准 HTTPS 的檢查。 -->
 </dict>
 </plist>

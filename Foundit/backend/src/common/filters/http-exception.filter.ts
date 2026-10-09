@@ -27,14 +27,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getResponse()
         : '伺服器內部錯誤';
 
-    this.logger.error(`${request.method} ${request.url} → ${status}`, exception instanceof Error ? exception.stack : '');
+    // 只記路徑不記查詢字串：/items 的查詢會帶使用者目前的經緯度，不該進日誌。
+    const path = (request.originalUrl ?? request.url ?? '').split('?')[0];
+    if (status >= 500) {
+      this.logger.error(`${request.method} ${path} → ${status}`, exception instanceof Error ? exception.stack : '');
+    } else {
+      this.logger.warn(`${request.method} ${path} → ${status}`);
+    }
 
     response.status(status).json({
       success: false,
       statusCode: status,
       message: typeof message === 'object' ? (message as any).message : message,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      path,
     });
   }
 }

@@ -21,12 +21,14 @@ import '../../presentation/screens/onboarding/onboarding_screen.dart';
 import '../../presentation/screens/profile/edit_profile_screen.dart';
 import '../../presentation/screens/profile/profile_screen.dart';
 import '../../presentation/screens/profile/settings_screen.dart';
+import '../../presentation/screens/profile/safety_screen.dart';
 import '../../presentation/screens/qr/qr_scan_screen.dart';
 import '../../presentation/screens/qr/qr_screen.dart';
 import '../../presentation/screens/search/search_screen.dart';
 import '../../presentation/screens/profile/collection_screen.dart';
 import '../../presentation/screens/splash/splash_screen.dart';
 import '../../presentation/providers/auth_provider.dart';
+import '../services/tag_links.dart';
 
 /// 預設：iOS 風左滑 + 淡入（比 Material 預設更柔和）
 CustomTransitionPage<T> _slidePage<T>(Widget child, GoRouterState state) {
@@ -202,7 +204,12 @@ List<RouteBase> _buildRoutes() => <RouteBase>[
   ),
   GoRoute(
     path: '/qr/scan',
-    pageBuilder: (_, state) => _modalPage(const QrScanScreen(), state),
+    pageBuilder: (_, state) => _modalPage(
+      QrScanScreen(
+        initialCode: tagCodeOrNull(state.uri.queryParameters['code']),
+      ),
+      state,
+    ),
   ),
   GoRoute(
     path: '/ai-match',
@@ -211,6 +218,10 @@ List<RouteBase> _buildRoutes() => <RouteBase>[
   GoRoute(
     path: '/profile/edit',
     pageBuilder: (_, state) => _modalPage(const EditProfileScreen(), state),
+  ),
+  GoRoute(
+    path: '/safety',
+    pageBuilder: (_, state) => _slidePage(const SafetyScreen(), state),
   ),
   GoRoute(
     path: '/settings',
@@ -225,6 +236,11 @@ List<RouteBase> _buildRoutes() => <RouteBase>[
           : ItemDetailScreen(item: item);
       return _slidePage(child, state);
     },
+  ),
+  GoRoute(
+    path: '/item/:id/edit',
+    pageBuilder: (_, state) =>
+        _modalPage(EditItemRoute(id: state.pathParameters['id']!), state),
   ),
   GoRoute(
     path: '/photo-viewer',

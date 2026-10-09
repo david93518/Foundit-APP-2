@@ -1,5 +1,7 @@
-# Persistent beta environment; API port is published for the LAN tunnel host.
-# The reverse proxy / named tunnel connects to this host on port 3000.
+# Persistent beta environment. Cloudflare Tunnel on this host connects to 127.0.0.1:3000.
+# The API port is NOT published on the LAN by default: a direct LAN connection would skip
+# Cloudflare and could forge CF-Connecting-IP. Set API_BIND_ADDR=0.0.0.0 only if the tunnel
+# really runs on another machine (and then firewall port 3000 to that machine only).
 name: foundit-beta
 services:
   postgres:
@@ -7,10 +9,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:?}
-      POSTGRES_USER: ${DB_USER:?}
-      POSTGRES_PASSWORD: ${DB_PASS:?}
+      # 資料庫擁有者（超級使用者）只給 migration 用；API 用 DB_USER 的受限帳號，見 scripts/db-least-privilege.sql。
+      POSTGRES_USER: ${DB_MIGRATION_USER:-${DB_USER:?}}
+      POSTGRES_PASSWORD: ${DB_MIGRATION_PASS:-${DB_PASS:?}}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    security_opt: ['no-new-privileges:true']
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
       interval: 5s
@@ -30,7 +34,8 @@ services:
       DB_HOST: postgres
       DB_PORT: '5432'
       PORT: '3000'
-    ports: ['0.0.0.0:3000:3000']
+    ports: ['${API_BIND_ADDR:-127.0.0.1}:3000:3000']
+    security_opt: ['no-new-privileges:true']
     volumes:
       - uploads:/app/uploads
     depends_on:

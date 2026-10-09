@@ -3,8 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { verifyGoogleIdToken } from '../auth/google-id-token';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { readdir, unlink } from 'fs/promises';
-import { join } from 'path';
 import { User } from '../common/entities/user.entity';
 import { ItemsService } from '../items/items.service';
 import { Item, ItemStatus, ItemType } from '../common/entities/item.entity';
@@ -12,6 +10,13 @@ import { Message } from '../common/entities/message.entity';
 import { QrItem } from '../common/entities/qr-item.entity';
 import { OtpService } from '../auth/otp.service';
 import { ChatsGateway } from '../chats/chats.gateway';
+import { verifyInvitedCredentials } from '../auth/invited-credentials';
+import { isGoogleAvatar, isOwnUpload, publicBaseUrl, uploadSecret } from '../common/media-url';
+import { findSensitiveData, isReservedName } from '../common/text-safety';
+import { UploadCleanup } from '../common/entities/upload-cleanup.entity';
+import { Notification } from '../common/entities/notification.entity';
+import { MessageType } from '../common/entities/message.entity';
+import { SAFE_IMAGE_NAME } from '../upload/private-media';
 
 export interface UserStats {
   /** 我發布過的物品總數 */
@@ -63,12 +68,28 @@ export class UsersService {
 
   async updateProfile(userId: string, payload: UpdateProfilePayload): Promise<User> {
     const user = await this.getMe(userId);
-    if (payload.name !== undefined && payload.name.length > 0) {
+    if (payload.name !== undefined && payload.name.length > 0 && payload.name !== user.name) {
+      // 暱稱會出現在刊登、聊天與防丟牌掃描頁，不能冒充官方，也不能拿來公開聯絡方式。
+      if (user.role !== 'admin' && isReservedName(payload.name)) {
+        throw new BadRequestException('這個名稱保留給 FOUND !T 官方使用，請換一個');
+      }
+      const sensitive = findSensitiveData(payload.name);
+      if (sensitive) throw new BadRequestException(`暱稱不能包含${sensitive}`);
       user.name = payload.name;
     }
-    if (payload.avatarUrl !== undefined) user.avatarUrl = payload.avatarUrl;
+    if (payload.avatarUrl !== undefined) {
+      const avatar = payload.avatarUrl.trim();
+      const allowed = avatar === '' || avatar === user.avatarUrl || isGoogleAvatar(avatar) ||
+        isOwnUpload(avatar, user.id, publicBaseUrl(this.config), uploadSecret(this.config));
+      if (!allowed) throw new BadRequestException('頭像必須是上傳到 FOUND !T 的圖片');
+      user.avatarUrl = avatar;
+    }
     if (payload.bio !== undefined) user.bio = payload.bio;
-    if (payload.email !== undefined) user.email = payload.email;
+    if (payload.email !== undefined && payload.email !== user.email) {
+      // Google 帳號的 email 每次登入都由 Google 驗證後覆寫，不接受自行修改。
+      if (user.googleSub) throw new BadRequestException('Google 帳號的 email 由 Google 管理');
+      user.email = payload.email;
+    }
     return this.userRepo.save(user);
   }
 
@@ -102,7 +123,25 @@ export class UsersService {
   private async eraseAccount(user: User): Promise<void> {
     const userId = user.id;
     const now = new Date();
-    await this.itemRepo
+    await this.userRepo.manager.transaction(async manager => {
+      const current = await manager.findOne(User, {
+        where: { id: userId }, lock: { mode: 'pessimistic_write' },
+      });
+      if (!current || current.status !== 'active') throw new UnauthorizedException('帳號無法刪除');
+      const items = await manager.find(Item, { where: { userId }, select: ['images'] });
+      const images = await manager.find(Message, { where: { senderId: userId, type: MessageType.IMAGE }, select: ['content'] });
+      const urls = [...items.flatMap(item => item.images ?? []), ...images.map(image => image.content), current.avatarUrl];
+      const base = publicBaseUrl(this.config);
+      const files = urls.flatMap(value => {
+        try {
+          const url = new URL(value);
+          const name = url.pathname.split('/').pop() ?? '';
+          return base && url.origin === new URL(base).origin && SAFE_IMAGE_NAME.test(name) ? [name] : [];
+        } catch { return []; }
+      });
+      // The retry job and all PII changes commit or roll back together.
+      await manager.upsert(UploadCleanup, { userId, files: [...new Set(files)] }, ['userId']);
+      await manager.getRepository(Item)
       .createQueryBuilder()
       .update(Item)
       .set({
@@ -118,34 +157,30 @@ export class UsersService {
       })
       .where('user_id = :userId', { userId })
       .execute();
-    await this.messageRepo
+      await manager.getRepository(Message)
       .createQueryBuilder()
       .update(Message)
       .set({ content: '（訊息已刪除）' })
       .where('sender_id = :userId', { userId })
       .execute();
-    await this.qrRepo.update({ userId }, { revokedAt: now });
-    user.status = 'deleted';
-    user.tokenVersion += 1;
-    user.phone = `deleted:${user.id}`.slice(0, 100);
-    user.name = '已刪除的使用者';
-    user.email = '';
-    user.bio = '';
-    user.avatarUrl = '';
-    user.googleSub = null;
-    user.fcmToken = null;
-    user.isVerified = false;
-    await this.userRepo.save(user);
+      await manager.update(QrItem, { userId }, { revokedAt: now, name: '已移除的物品', description: '', qrImageUrl: '' });
+      await manager.update(Notification, { userId }, { title: '', content: '' });
+      await manager.update(User, { id: userId }, {
+        status: 'deleted', tokenVersion: () => '"token_version" + 1',
+        phone: `deleted:${userId}`.slice(0, 100), name: '已刪除的使用者',
+        email: '', bio: '', avatarUrl: '', googleSub: null, fcmToken: null, isVerified: false,
+      });
+    });
     this.gateway.disconnectUser(userId);
-    await this.removeUploads(userId);
   }
 
-  private async removeUploads(userId: string): Promise<void> {
-    const dir = join(process.cwd(), 'uploads');
-    const names = await readdir(dir).catch(() => [] as string[]);
-    await Promise.all(names
-      .filter((name) => name.startsWith(`${userId}_`) && !name.includes('..') && !name.includes('/'))
-      .map((name) => unlink(join(dir, name)).catch(() => undefined)));
+  async deleteInvitedAccount(userId: string, username: string, password: string): Promise<void> {
+    const verified = await verifyInvitedCredentials(this.config, username, password);
+    if (verified !== userId) throw new UnauthorizedException('帳號或密碼不正確');
+    const user = await this.getMe(userId);
+    if (user.status !== 'active' || user.role !== 'user' || user.googleSub ||
+        user.phone !== `invited:${username}`) throw new UnauthorizedException('帳號無法刪除');
+    await this.eraseAccount(user);
   }
 
   async getMyItems(userId: string) {

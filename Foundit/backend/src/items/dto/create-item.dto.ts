@@ -1,10 +1,11 @@
 import {
-  ArrayMaxSize, Equals, IsArray, IsBoolean, IsEnum, IsNumber, IsOptional, IsString,
+  ArrayMaxSize, Equals, IsArray, IsBoolean, IsInt, IsEnum, IsNumber, IsOptional, IsString,
   Max, MaxLength, Min, MinLength,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { ItemType } from '../../common/entities/item.entity';
+import { CleanText } from '../../common/text-safety';
 
 export class CreateItemDto {
   @ApiProperty({ enum: ItemType })
@@ -13,12 +14,14 @@ export class CreateItemDto {
   type: ItemType;
 
   @ApiProperty({ example: '黑色皮夾' })
+  @CleanText()
   @IsString()
   @MinLength(1)
   @MaxLength(100)
   title: string;
 
   @ApiProperty({ example: '錢包/皮夾' })
+  @CleanText()
   @IsString()
   @MinLength(1)
   @MaxLength(50)
@@ -26,11 +29,13 @@ export class CreateItemDto {
 
   @ApiProperty({ required: false })
   @IsOptional()
+  @CleanText(true)
   @IsString()
   @MaxLength(2000)
   description?: string;
 
   @ApiProperty({ example: '黑色' })
+  @CleanText()
   @IsString()
   @MaxLength(30)
   color: string;
@@ -61,6 +66,7 @@ export class CreateItemDto {
 
   @ApiProperty({ required: false })
   @IsOptional()
+  @CleanText()
   @IsString()
   @MaxLength(200)
   locationName?: string;
@@ -68,13 +74,15 @@ export class CreateItemDto {
   @ApiProperty({ example: 1743004800000, description: 'Unix timestamp ms' })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
+  @Min(946_684_800_000)
+  @Max(4_102_444_800_000)
   lostAt?: number;
 
   @ApiProperty({ required: false, default: 0 })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Max(1_000_000)
   reward?: number;
@@ -86,6 +94,7 @@ export class CreateItemDto {
 
   @ApiProperty({ required: false })
   @IsOptional()
+  @CleanText()
   @IsString()
   @MaxLength(200)
   storageLocation?: string;

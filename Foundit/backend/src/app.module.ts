@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { LocationsModule } from './locations/locations.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -27,6 +28,8 @@ import { Report } from './common/entities/report.entity';
 import { Block } from './common/entities/block.entity';
 import { AdminAction } from './common/entities/admin-action.entity';
 import { DatabaseModule } from './database/database.module';
+import { ChatRateLimit } from './common/entities/chat-rate-limit.entity';
+import { UploadCleanup } from './common/entities/upload-cleanup.entity';
 
 @Module({
   imports: [
@@ -34,20 +37,30 @@ import { DatabaseModule } from './database/database.module';
     DatabaseModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST', 'localhost'),
-        port: config.get<number>('DB_PORT', 5432),
-        database: config.get<string>('DB_NAME', 'foundit'),
-        username: config.get<string>('DB_USER', 'foundit_user'),
-        password: config.get<string>('DB_PASS', 'foundit_pass'),
-        entities: [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction],
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
-        logging: config.get<string>('NODE_ENV') === 'development',
-      }),
+      useFactory: (config: ConfigService) => {
+        const production = config.get<string>('NODE_ENV') === 'production';
+        const password = config.get<string>('DB_PASS') ?? (production ? '' : 'foundit_pass');
+        if (production && (!password || password === 'foundit_pass' || password.startsWith('change-me'))) {
+          throw new Error('正式環境的 DB_PASS 缺失或仍是範例值，拒絕啟動');
+        }
+        return {
+          type: 'postgres' as const,
+          host: config.get<string>('DB_HOST', 'localhost'),
+          port: config.get<number>('DB_PORT', 5432),
+          database: config.get<string>('DB_NAME', 'foundit'),
+          username: config.get<string>('DB_USER', 'foundit_user'),
+          password,
+          entities: [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction, ChatRateLimit, UploadCleanup],
+          synchronize: !production,
+          // 正式環境的執行帳號只有資料讀寫權限；擴充套件與 schema 由 migration 帳號負責。
+          installExtensions: !production,
+          logging: config.get<string>('NODE_ENV') === 'development',
+        };
+      },
       inject: [ConfigService],
     }),
     AuthModule,
+    LocationsModule,
     UsersModule,
     ItemsModule,
     ChatsModule,

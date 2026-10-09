@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 export 'brand_mark.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -160,6 +162,18 @@ class StatusTag extends StatelessWidget {
         : found
         ? AppColors.primary50
         : AppColors.ink50;
+    final label = Text(
+      itemStatusLabel(item),
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 11.5,
+        height: 1.3,
+        fontWeight: FontWeight.w700,
+        color: fg,
+      ),
+    );
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 4, 9, 4),
       decoration: BoxDecoration(
@@ -175,15 +189,9 @@ class StatusTag extends StatelessWidget {
             decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
           ),
           const SizedBox(width: 5),
-          Text(
-            itemStatusLabel(item),
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.3,
-              fontWeight: FontWeight.w700,
-              color: fg,
-            ),
-          ),
+          // 照片上的寬度由 [_PhotoBadges] 決定，極窄時以省略號收尾而不是溢出；
+          // 其他地方（詳情、地圖）可能放在不限寬的 Row 裡，不能用 Flexible。
+          onPhoto ? Flexible(child: label) : label,
         ],
       ),
     );
@@ -328,8 +336,8 @@ class _FoundItemCardState extends ConsumerState<FoundItemCard> {
             height: 48,
             child: Center(
               child: Container(
-                width: 36,
-                height: 36,
+                width: _saveRing,
+                height: _saveRing,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: .94),
                   shape: BoxShape.circle,
@@ -356,28 +364,37 @@ class _FoundItemCardState extends ConsumerState<FoundItemCard> {
           tag: 'item-photo-${item.id}',
           child: ItemPhoto(item.images.firstOrNull),
         ),
-        Positioned(left: 10, top: 10, child: StatusTag(item, onPhoto: true)),
-        Positioned(right: 2, top: 2, child: bookmark),
-        if (item.hasReward)
-          Positioned(
-            left: 10,
-            bottom: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.reward100,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                '酬謝 NT\$${item.reward}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.reward,
-                ),
-              ),
-            ),
+        Positioned.fill(
+          child: _PhotoBadges(
+            status: StatusTag(item, onPhoto: true),
+            save: bookmark,
+            reward: item.hasReward
+                ? Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      // 疊在照片上：用亮色模式的值，照片不會跟著變暗。
+                      color: AppColors.reward100.light,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '酬謝 NT\$${item.reward}',
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.3,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.reward.light,
+                      ),
+                    ),
+                  )
+                : null,
           ),
+        ),
       ],
     );
     final text = Column(
@@ -471,6 +488,212 @@ class _FoundItemCardState extends ConsumerState<FoundItemCard> {
         child: card,
       ),
     );
+  }
+}
+
+/// 收藏鈕看得見的圓；觸控區仍是 48px。
+const _saveRing = 36.0;
+
+enum _PhotoSlot { status, reward, save }
+
+/// 酬謝標籤可以放的位置，依偏好排序。
+enum _RewardSpot { bottomLeft, belowStatus, besideSave, hidden }
+
+/// 疊在物品照片上的狀態、酬謝與收藏鈕。
+///
+/// 收藏鈕預設在右上；照片太窄（清單卡只有 104px，或使用者放大字級）
+/// 放不下狀態標籤時，改到右下——和角括號同一條對角線——酬謝移到狀態下方
+/// 或收藏鈕左側；都放不下就先收起酬謝（物品頁仍看得到）。
+/// 連狀態都排不下時，狀態限制在收藏鈕左側、以省略號收尾。
+/// 所以不論照片多寬、字多大，收藏鈕的圓都不會蓋住任何標籤上的字。
+class _PhotoBadges
+    extends SlottedMultiChildRenderObjectWidget<_PhotoSlot, RenderBox> {
+  const _PhotoBadges({required this.status, required this.save, this.reward});
+  final Widget status;
+  final Widget save;
+  final Widget? reward;
+
+  @override
+  Iterable<_PhotoSlot> get slots => _PhotoSlot.values;
+
+  @override
+  Widget? childForSlot(_PhotoSlot slot) => switch (slot) {
+    _PhotoSlot.status => status,
+    _PhotoSlot.reward => reward,
+    _PhotoSlot.save => save,
+  };
+
+  @override
+  _RenderPhotoBadges createRenderObject(BuildContext context) =>
+      _RenderPhotoBadges();
+}
+
+class _RenderPhotoBadges extends RenderBox
+    with SlottedContainerRenderObjectMixin<_PhotoSlot, RenderBox> {
+  /// 標籤距照片邊緣。
+  static const _inset = 10.0;
+
+  /// 收藏鈕觸控區距照片邊緣（看得見的圓因此離邊 8px）。
+  static const _edge = 2.0;
+
+  /// 標籤與圓、標籤與標籤之間至少留的空隙。
+  static const _gap = 4.0;
+
+  /// 依序嘗試的排法：收藏鈕位置 × 酬謝位置。
+  static const _plans = [
+    (bottom: false, reward: _RewardSpot.bottomLeft), // 原本的樣子
+    (bottom: true, reward: _RewardSpot.belowStatus),
+    (bottom: true, reward: _RewardSpot.besideSave),
+    (bottom: true, reward: _RewardSpot.hidden),
+    (bottom: false, reward: _RewardSpot.hidden),
+  ];
+
+  /// 最後手段時標籤能畫的範圍；平常是 null，不必裁切。
+  Rect? _chipClip;
+  bool _rewardHidden = false;
+  final _clipLayer = LayerHandle<ClipRectLayer>();
+
+  RenderBox? get _status => childForSlot(_PhotoSlot.status);
+  RenderBox? get _reward => childForSlot(_PhotoSlot.reward);
+  RenderBox? get _save => childForSlot(_PhotoSlot.save);
+
+  static Offset _offsetOf(RenderBox child) =>
+      (child.parentData! as BoxParentData).offset;
+
+  static void _place(RenderBox child, Offset at, BoxConstraints constraints) {
+    child.layout(constraints, parentUsesSize: true);
+    (child.parentData! as BoxParentData).offset = at;
+  }
+
+  // 只以 Positioned.fill 疊在照片上，大小就是照片的大小。
+  @override
+  Size computeDryLayout(covariant BoxConstraints constraints) =>
+      constraints.biggest;
+
+  @override
+  void performLayout() {
+    size = constraints.biggest;
+    final status = _status!;
+    final reward = _reward;
+    final save = _save!
+      ..layout(BoxConstraints.loose(size), parentUsesSize: true);
+    // 觸控區比看得見的圓大；只有圓需要避開標籤。
+    final ring = math.max(0.0, (save.size.shortestSide - _saveRing) / 2);
+    final saveX = size.width - _edge - save.size.width;
+    final topRight = Offset(saveX, _edge);
+    final bottomRight = Offset(saveX, size.height - _edge - save.size.height);
+    // 右側可以貼近到收藏鈕觸控區的邊距，窄照片上的酬謝金額才不會被截掉。
+    final full = BoxConstraints(
+      maxWidth: math.max(0.0, size.width - _inset - _edge),
+    );
+    // 圓左側、留了空隙之後還能用的寬度。
+    final left = saveX + ring - _gap;
+    final beside = BoxConstraints(maxWidth: math.max(0.0, left - _inset));
+    final statusRect = const Offset(_inset, _inset) & status.getDryLayout(full);
+    bool apart(Rect a, Rect b) =>
+        !a.inflate(_gap / 2).overlaps(b.inflate(_gap / 2));
+    bool inside(Rect r) => r.top >= 0 && r.bottom <= size.height;
+
+    final wasHidden = _rewardHidden;
+    _chipClip = null;
+    for (final plan in _plans) {
+      final saveAt = plan.bottom ? bottomRight : topRight;
+      final ringRect = (saveAt & save.size).deflate(ring);
+      final rewardBox = plan.reward == _RewardSpot.besideSave ? beside : full;
+      Rect? rewardRect;
+      if (reward != null && plan.reward != _RewardSpot.hidden) {
+        final r = reward.getDryLayout(rewardBox);
+        // 擠在收藏鈕旁只剩「酬…」沒有意義，寧可換下一種排法。
+        if (plan.reward == _RewardSpot.besideSave &&
+            r.width < reward.getDryLayout(full).width) {
+          continue;
+        }
+        rewardRect = plan.reward == _RewardSpot.belowStatus
+            ? Offset(_inset, statusRect.bottom + _gap) & r
+            : Offset(_inset, size.height - _inset - r.height) & r;
+      }
+      final fits =
+          [
+            statusRect,
+            ?rewardRect,
+          ].every((chip) => apart(chip, ringRect) && inside(chip)) &&
+          (rewardRect == null || apart(statusRect, rewardRect));
+      if (!fits) continue;
+      _place(status, statusRect.topLeft, full);
+      if (reward != null) {
+        _place(reward, rewardRect?.topLeft ?? Offset.zero, rewardBox);
+      }
+      _rewardHidden = reward != null && rewardRect == null;
+      (save.parentData! as BoxParentData).offset = saveAt;
+      if (wasHidden != _rewardHidden) markNeedsSemanticsUpdate();
+      return;
+    }
+
+    // 最後手段（照片比收藏鈕還矮之類）：收藏鈕回右上，狀態只用它左側的空間、
+    // 以省略號收尾；連最小的標籤都塞不下時直接裁切，確保圓上不會壓著字。
+    _place(status, const Offset(_inset, _inset), beside);
+    if (reward != null) _place(reward, Offset.zero, beside);
+    _rewardHidden = reward != null;
+    (save.parentData! as BoxParentData).offset = topRight;
+    _chipClip = Rect.fromLTRB(0, 0, math.max(0.0, left), size.height);
+    if (wasHidden != _rewardHidden) markNeedsSemanticsUpdate();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    void paintChips(PaintingContext context, Offset offset) {
+      final status = _status!;
+      context.paintChild(status, offset + _offsetOf(status));
+      final reward = _reward;
+      if (reward != null && !_rewardHidden) {
+        context.paintChild(reward, offset + _offsetOf(reward));
+      }
+    }
+
+    final clip = _chipClip;
+    if (clip == null) {
+      _clipLayer.layer = null;
+      paintChips(context, offset);
+    } else {
+      _clipLayer.layer = context.pushClipRect(
+        needsCompositing,
+        offset,
+        clip,
+        paintChips,
+        oldLayer: _clipLayer.layer,
+      );
+    }
+    final save = _save!;
+    context.paintChild(save, offset + _offsetOf(save));
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    // 收藏鈕畫在最上層，先測它。
+    for (final child in [_save, if (!_rewardHidden) _reward, _status]) {
+      if (child == null) continue;
+      final hit = result.addWithPaintOffset(
+        offset: _offsetOf(child),
+        position: position,
+        hitTest: (result, transformed) =>
+            child.hitTest(result, position: transformed),
+      );
+      if (hit) return true;
+    }
+    return false;
+  }
+
+  @override
+  void visitChildrenForSemantics(RenderObjectVisitor visitor) {
+    for (final child in children) {
+      if (!_rewardHidden || child != _reward) visitor(child);
+    }
+  }
+
+  @override
+  void dispose() {
+    _clipLayer.layer = null;
+    super.dispose();
   }
 }
 

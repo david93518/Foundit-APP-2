@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ModerationService } from './moderation.service';
 import { Report } from '../common/entities/report.entity';
@@ -31,13 +31,18 @@ function queryBuilder() {
 }
 
 function build(item?: Partial<Item>) {
-  const actions = { create: jest.fn((row) => row), save: jest.fn(async (row) => row), find: jest.fn() };
+  const actions = {
+    create: jest.fn((row) => row),
+    save: jest.fn(async (row) => row),
+    find: jest.fn(),
+    findOne: jest.fn(async () => ({ action: 'item.hide' })),
+  };
   const items = {
     findOne: jest.fn(async () => (item ? { ...item } : null)),
     save: jest.fn(async (row) => row),
     createQueryBuilder: jest.fn(),
   };
-  const users = { createQueryBuilder: jest.fn() };
+  const users = { createQueryBuilder: jest.fn(), findOne: jest.fn(async () => ({ id: 'owner', status: 'active' })) };
   const service = new ModerationService(
     {} as Repository<Report>,
     {} as Repository<Block>,
@@ -67,6 +72,17 @@ describe('ModerationService item moderation', () => {
     expect(saved.status).toBe(ItemStatus.ACTIVE);
     expect(saved.hiddenAt).toBeNull();
     expect(actions.save).toHaveBeenCalledWith(expect.objectContaining({ action: 'item.restore', result: 'active' }));
+  });
+
+  it('refuses to republish a listing the owner removed or whose owner deleted the account', async () => {
+    const removed = build({ id: ITEM_ID, userId: 'owner', status: ItemStatus.CLOSED, hiddenAt: new Date() });
+    removed.actions.findOne.mockResolvedValueOnce(null as never);
+    await expect(removed.service.restoreItem(admin, ITEM_ID, '誤判')).rejects.toBeInstanceOf(BadRequestException);
+    const gone = build({ id: ITEM_ID, userId: 'owner', status: ItemStatus.CLOSED, hiddenAt: new Date() });
+    gone.users.findOne.mockResolvedValueOnce({ id: 'owner', status: 'deleted' } as never);
+    await expect(gone.service.restoreItem(admin, ITEM_ID, '誤判')).rejects.toBeInstanceOf(BadRequestException);
+    expect(removed.items.save).not.toHaveBeenCalled();
+    expect(gone.items.save).not.toHaveBeenCalled();
   });
 
   it('treats a malformed or unknown id as not found without touching the database', async () => {

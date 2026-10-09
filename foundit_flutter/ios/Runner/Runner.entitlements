@@ -2,8 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 推播。只在 build_real_ios.py 帶入 Firebase iOS 設定時才會經由 xcconfig 啟用。 -->
+	<!-- 推播。只在 build_real_ios.py 帶入 Firebase iOS 設定時才會經由 xcconfig 使用這個檔案；
+	     沒有推播時改用 RunnerLinks.entitlements（只有 Universal Links）。 -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Universal Links：手機相機掃到 https://api.foundit.tw/qr/... 時直接開進 App。 -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:api.foundit.tw</string>
+	</array>
 </dict>
 </plist>

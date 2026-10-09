@@ -14,6 +14,9 @@
         android:label="FOUND !T"
         android:requestLegacyExternalStorage="true"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -32,9 +35,27 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- 不讓其他 App 或網頁用 intent 直接開到 App 內任意頁面；推播與 QR 由程式內導頁。 -->
+            <meta-data
+              android:name="flutter_deeplinking_enabled"
+              android:value="false"
+              />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- 防丟牌貼紙網址（App Links）與落地頁按鈕；App 只處理 /qr/<code>，見 lib/core/services/tag_links.dart。 -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="api.foundit.tw" android:pathPrefix="/qr/"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="foundit" android:host="qr"/>
             </intent-filter>
         </activity>
         <!-- FCM 推播的狀態列圖示與底色 -->

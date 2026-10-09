@@ -9,19 +9,21 @@ import { JwtStrategy } from './jwt.strategy';
 import { OtpService } from './otp.service';
 import { User } from '../common/entities/user.entity';
 import { UserPoints } from '../common/entities/user-points.entity';
+import { AdminAction } from '../common/entities/admin-action.entity';
 import { ChatsModule } from '../chats/chats.module';
 import { readJwtExpiresIn, readJwtSecret } from './jwt-secret';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, UserPoints]),
+    TypeOrmModule.forFeature([User, UserPoints, AdminAction]),
     PassportModule,
     ChatsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         secret: readJwtSecret(config),
-        signOptions: { expiresIn: readJwtExpiresIn(config) as any },
+        signOptions: { expiresIn: readJwtExpiresIn(config) as any, algorithm: 'HS256' },
+        verifyOptions: { algorithms: ['HS256'] },
       }),
       inject: [ConfigService],
     }),

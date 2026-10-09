@@ -10,9 +10,9 @@ concurrency:
   group: foundit-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# 預設只讀；需要推映像的 job 自己再要 packages: write。
 permissions:
   contents: read
-  packages: write
 
 jobs:
   backend:
@@ -22,8 +22,10 @@ jobs:
       run:
         working-directory: Foundit/backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -39,8 +41,10 @@ jobs:
       run:
         working-directory: foundit_flutter
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: 3.47.0
@@ -53,24 +57,29 @@ jobs:
     name: API image
     needs: backend
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: meta
         shell: bash
         run: |
           owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "name=ghcr.io/${owner}/foundit-api" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${owner}/foundit-api:${{ github.sha }}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: Foundit/backend
           file: Foundit/backend/Dockerfile
@@ -88,43 +97,49 @@ jobs:
     if: ${{ vars.DEPLOY_ENABLED == 'true' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Copy deploy files
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Prepare SSH
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          # 主機金鑰必須事先登記（ssh-keyscan 後人工核對指紋），不接受第一次連線就自動信任。
+          if [ -z "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            echo "請在 secrets 設定 DEPLOY_KNOWN_HOSTS（部署主機的 known_hosts 內容）。"
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/foundit
+          echo "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/foundit ~/.ssh/known_hosts
+      - name: Copy deploy files
         run: |
           set -eu
           port="${DEPLOY_PORT:-22}"
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/foundit
-          chmod 600 ~/.ssh/foundit
-          ssh -i ~/.ssh/foundit -p "$port" -o StrictHostKeyChecking=accept-new "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
-          rsync -az \
-            --exclude '.env' \
-            --exclude '.deploy.env' \
-            --filter 'protect .env' \
-            --filter 'protect .deploy.env' \
-            -e "ssh -i ~/.ssh/foundit -p $port -o StrictHostKeyChecking=accept-new" \
-            Foundit/backend/deploy/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+          ssh -i ~/.ssh/foundit -p "$port" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          rsync -az --exclude '.env' --exclude '.deploy.env' --filter 'protect .env' --filter 'protect .deploy.env' -e "ssh -i $HOME/.ssh/foundit -p $port -o StrictHostKeyChecking=yes" Foundit/backend/deploy/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
       - name: Start release
-        uses: appleboy/ssh-action@v1.2.2
         env:
           API_IMAGE: ${{ needs.image.outputs.image }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
-          command_timeout: 20m
-          envs: API_IMAGE,GHCR_USER,GHCR_TOKEN
-          script: |
-            set -eu
-            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            sh "${{ secrets.DEPLOY_PATH }}/scripts/remote-up.sh"
+        run: |
+          set -eu
+          port="${DEPLOY_PORT:-22}"
+          # 憑證從 stdin 傳給遠端 docker login，不出現在指令列或遠端的 shell 歷史。
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/foundit -p "$port" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin && API_IMAGE='$API_IMAGE' sh '$DEPLOY_PATH/scripts/remote-up.sh'"
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/foundit

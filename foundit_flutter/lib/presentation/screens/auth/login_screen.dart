@@ -6,10 +6,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../data/repositories/auth_repository.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
 import '../../widgets/foundit_ui.dart';
 import '../../widgets/google_account_button.dart';
+import '../../widgets/invited_account_dialog.dart';
 
 /// App 入口：未登入時一律先停在這裡，登入成功後由路由守衛帶到首頁。
 class LoginScreen extends ConsumerStatefulWidget {
@@ -88,6 +90,28 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _invited() async {
+    // Update global auth only after the dialog closes, so the route guard
+    // cannot replace the login route while its dialog is still open.
+    final repository = ref.read(authRepositoryProvider);
+    AuthResult? session;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => InvitedAccountDialog(
+        onSubmit: (username, password) async {
+          final result = await repository.invitedLogin(username, password);
+          if (result.success) session = result;
+          return result.success ? null : result.message;
+        },
+      ),
+    );
+    if (ok != true || !mounted) return;
+    if (session == null) return;
+    ref.read(authProvider.notifier).acceptSession(session!);
+    _done();
+  }
+
   @override
   Widget build(BuildContext context) {
     final mock = ref.watch(useMockProvider);
@@ -152,6 +176,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             onPressed: () => setState(() => _phoneOpen = true),
                             child: const Text('改用手機號碼登入'),
                           ),
+                        ),
+                      if (google)
+                        TextButton(
+                          onPressed: _busy ? null : _invited,
+                          child: const Text('受邀帳號登入'),
                         ),
                       if (showPhoneForm) ...[
                         if (google) const SizedBox(height: 18),

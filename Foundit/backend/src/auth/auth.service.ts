@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
@@ -12,6 +12,18 @@ import { OAuthDto } from './dto/oauth.dto';
 import { GoogleIdentity, verifyGoogleIdToken } from './google-id-token';
 import { normalizeTaiwanMobile } from '../common/phone';
 import { ChatsGateway } from '../chats/chats.gateway';
+import { verifyInvitedCredentials } from './invited-credentials';
+import { InvitedLoginDto } from './dto/invited-login.dto';
+import { AdminAction } from '../common/entities/admin-action.entity';
+import { cleanText, findSensitiveData, isReservedName } from '../common/text-safety';
+import { isGoogleAvatar } from '../common/media-url';
+
+/** Google 顯示名稱常是真名，也可能被設成「FOUND !T 客服」；不合適時改用預設暱稱。 */
+function displayNameFromGoogle(name: string): string {
+  const cleaned = cleanText(name).slice(0, 50);
+  if (!cleaned || isReservedName(cleaned) || findSensitiveData(cleaned)) return 'Google 用戶';
+  return cleaned;
+}
 
 @Injectable()
 export class AuthService {
@@ -22,7 +34,10 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly chatsGateway: ChatsGateway,
+    @Optional() @InjectRepository(AdminAction) private readonly actions?: Repository<AdminAction>,
   ) {}
+
+  private readonly logger = new Logger(AuthService.name);
 
   async sendOtp(dto: SendOtpDto): Promise<void> {
     await this.otpService.send(normalizeTaiwanMobile(dto.phone));
@@ -53,7 +68,7 @@ export class AuthService {
       user.isVerified = true;
       user = await this.userRepo.save(user);
     }
-    user = await this.promoteAdmin(user);
+    user = await this.syncAdminRole(user, null);
     return { token: this.sign(user), user };
   }
 
@@ -83,22 +98,23 @@ export class AuthService {
       throw new UnauthorizedException('這個帳號無法登入');
     }
 
+    const picture = isGoogleAvatar(identity.picture) ? identity.picture : '';
     if (user) {
       user.googleSub = sub;
-      if (!user.name) user.name = identity.name.slice(0, 50) || 'Google 用戶';
-      if (!user.avatarUrl) user.avatarUrl = identity.picture;
+      if (!user.name) user.name = displayNameFromGoogle(identity.name);
+      if (!user.avatarUrl) user.avatarUrl = picture;
       user.email = identity.email.slice(0, 120);
       user.isVerified = true;
       user = await this.userRepo.save(user);
-      user = await this.promoteAdmin(user);
+      user = await this.syncAdminRole(user, identity.email);
       return { token: this.sign(user), user };
     }
 
     user = this.userRepo.create({
       phone: `g:${sub}`.slice(0, 100),
       googleSub: sub,
-      name: identity.name.slice(0, 50) || 'Google 用戶',
-      avatarUrl: identity.picture,
+      name: displayNameFromGoogle(identity.name),
+      avatarUrl: picture,
       email: identity.email.slice(0, 120),
       isVerified: true,
       role: 'user',
@@ -107,12 +123,24 @@ export class AuthService {
     });
     user = await this.userRepo.save(user);
     await this.initPoints(user.id);
-    user = await this.promoteAdmin(user);
+    user = await this.syncAdminRole(user, identity.email);
     return { token: this.sign(user), user };
   }
 
   async logout(user: User): Promise<void> {
     await this.revoke(user.id);
+  }
+
+  async invitedLogin(dto: InvitedLoginDto): Promise<{ token: string; user: User }> {
+    const id = await verifyInvitedCredentials(this.config, dto.username, dto.password);
+    if (!id) throw new UnauthorizedException('帳號或密碼不正確，或邀請已失效');
+    const user = await this.userRepo.findOne({ where: { id } });
+    if (!user || user.status !== 'active' || user.role !== 'user' || user.googleSub ||
+        user.phone !== `invited:${dto.username}`) {
+      throw new UnauthorizedException('帳號或密碼不正確，或邀請已失效');
+    }
+    // No auto-registration, account linking, or admin promotion on this path.
+    return { token: this.sign(user), user };
   }
 
   async revoke(userId: string): Promise<void> {
@@ -132,10 +160,11 @@ export class AuthService {
 
   /**
    * 管理員名單來自環境變數：ADMIN_PHONES（手機登入）與 ADMIN_EMAILS（Google 登入）。
-   * 只在登入時提升，不會自動降級；要撤銷請直接改資料庫的 role。
+   * email 只採信這次登入由 Google 驗簽過的 verifiedEmail；users.email 不能拿來比對。
+   * Roles are provisioned by a separate DB operator, never by the API credential.
+   * An optional allow-list can further deny administrator login; it cannot grant a role.
    */
-  private async promoteAdmin(user: User): Promise<User> {
-    if (user.role === 'admin') return user;
+  private async syncAdminRole(user: User, verifiedEmail: string | null): Promise<User> {
     const phones = (this.config.get<string>('ADMIN_PHONES') ?? '')
       .split(',')
       .map((item) => normalizeTaiwanMobile(item))
@@ -144,11 +173,14 @@ export class AuthService {
       .split(',')
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean);
-    const email = (user.email ?? '').trim().toLowerCase();
-    const listed = phones.includes(user.phone) || (email !== '' && emails.includes(email));
-    if (!listed) return user;
-    user.role = 'admin';
-    return this.userRepo.save(user);
+    const email = (verifiedEmail ?? '').trim().toLowerCase();
+    const listed = (verifiedEmail == null && phones.includes(user.phone)) ||
+      (email !== '' && emails.includes(email));
+    const managed = phones.length > 0 || emails.length > 0;
+    if (user.role === 'admin' && managed && !listed) {
+      throw new UnauthorizedException('管理員資格需由管理者重新確認');
+    }
+    return user;
   }
 
   private sign(user: User): string {

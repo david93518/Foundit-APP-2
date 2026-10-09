@@ -65,11 +65,11 @@ describe('AuthService oauth boundary', () => {
   });
 
   it('creates identity only from verified Google claims, ignoring supplied profile data', async () => {
-    verify.mockResolvedValue({ sub: 'subject-1', email: 'verified@example.com', name: 'Verified', picture: 'https://example.com/photo', issuedAt: Math.floor(Date.now() / 1000) });
+    verify.mockResolvedValue({ sub: 'subject-1', email: 'verified@example.com', name: 'Verified', picture: 'https://lh3.googleusercontent.com/a/photo', issuedAt: Math.floor(Date.now() / 1000) });
     users.findOne.mockResolvedValue(null);
     await service.oauthLogin('google', { token: 'valid', provider: 'google', name: 'forged', avatarUrl: 'https://evil.example/photo' });
     expect(users.create).toHaveBeenCalledWith(expect.objectContaining({
-      googleSub: 'subject-1', email: 'verified@example.com', name: 'Verified', avatarUrl: 'https://example.com/photo', role: 'user',
+      googleSub: 'subject-1', email: 'verified@example.com', name: 'Verified', avatarUrl: 'https://lh3.googleusercontent.com/a/photo', role: 'user',
     }));
   });
 
@@ -110,19 +110,19 @@ describe('AuthService admin promotion by email', () => {
 
   beforeEach(() => verify.mockReset());
 
-  it('promotes a listed Google email on first login, ignoring case and spaces', async () => {
+  it('does not grant a role even for a listed verified email on first login', async () => {
     const { users, service } = build(' Owner@Example.com ,other@example.com');
     verify.mockResolvedValue({ sub: 's1', email: 'owner@example.com', name: 'Owner', picture: '', issuedAt: 1 });
     users.findOne.mockResolvedValue(null);
     const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
-    expect(user.role).toBe('admin');
-    expect(users.save).toHaveBeenLastCalledWith(expect.objectContaining({ role: 'admin' }));
+    expect(user.role).toBe('user');
+    expect(users.save).toHaveBeenLastCalledWith(expect.objectContaining({ role: 'user' }));
   });
 
-  it('promotes an existing Google account the next time it logs in', async () => {
+  it('preserves an operator-provisioned administrator', async () => {
     const { users, service } = build('owner@example.com');
     verify.mockResolvedValue({ sub: 's1', email: 'owner@example.com', name: 'Owner', picture: '', issuedAt: 1 });
-    users.findOne.mockResolvedValue({ id: 'u1', status: 'active', role: 'user', name: 'Owner', email: '', googleSub: 's1' });
+    users.findOne.mockResolvedValue({ id: 'u1', status: 'active', role: 'admin', name: 'Owner', email: '', googleSub: 's1' });
     const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
     expect(user.role).toBe('admin');
   });
@@ -141,5 +141,95 @@ describe('AuthService admin promotion by email', () => {
     users.findOne.mockResolvedValue(null);
     const { user } = await service.oauthLogin('google', { token: 'valid', provider: 'google' });
     expect(user.role).toBe('user');
+  });
+});
+
+describe('AuthService admin promotion', () => {
+  const verify = verifyGoogleIdToken as jest.MockedFunction<typeof verifyGoogleIdToken>;
+  const settings: Record<string, string> = {
+    GOOGLE_WEB_CLIENT_ID: 'client.apps.googleusercontent.com',
+    ADMIN_EMAILS: 'boss@example.com',
+    ADMIN_PHONES: '0911111111',
+  };
+  function build(existing: Partial<User>) {
+    const users = {
+      findOne: jest.fn(async () => ({ id: 'u1', role: 'user', status: 'active', tokenVersion: 0, ...existing })),
+      save: jest.fn(async (user) => user),
+      create: jest.fn((user) => user),
+    };
+    const service = new AuthService(
+      users as unknown as Repository<User>,
+      { findOne: jest.fn(async () => ({})), save: jest.fn(), create: jest.fn() } as unknown as Repository<UserPoints>,
+      { verify: jest.fn(() => true) } as unknown as OtpService,
+      { sign: jest.fn(() => 'token') } as unknown as JwtService,
+      { get: (key: string) => settings[key] } as ConfigService,
+      { disconnectUser: jest.fn() } as unknown as ChatsGateway,
+    );
+    return service;
+  }
+
+  it('ignores a self-edited profile email when logging in by phone', async () => {
+    const service = build({ phone: '0922222222', email: 'boss@example.com' });
+    const { user } = await service.verifyOtp({ phone: '0922222222', otp: '123456' });
+    expect(user.role).toBe('user');
+  });
+
+  it('does not grant a role via the phone allow-list', async () => {
+    const service = build({ phone: '0911111111' });
+    expect((await service.verifyOtp({ phone: '0911111111', otp: '123456' })).user.role).toBe('user');
+  });
+
+  it('does not grant a role through either a stored or verified email', async () => {
+    verify.mockResolvedValue({ sub: 's1', email: 'someone@example.com', name: 'n', picture: '', issuedAt: 0 });
+    const notAdmin = build({ googleSub: 's1', email: 'boss@example.com' });
+    expect((await notAdmin.oauthLogin('google', { token: 't', provider: 'google' })).user.role).toBe('user');
+    verify.mockResolvedValue({ sub: 's2', email: 'Boss@Example.com', name: 'n', picture: '', issuedAt: 0 });
+    const admin = build({ googleSub: 's2', email: '' });
+    expect((await admin.oauthLogin('google', { token: 't', provider: 'google' })).user.role).toBe('user');
+  });
+});
+
+describe('AuthService admin list is the source of truth', () => {
+  const verify = verifyGoogleIdToken as jest.MockedFunction<typeof verifyGoogleIdToken>;
+  function build(settings: Record<string, string>, existing: Partial<User>) {
+    const users = {
+      findOne: jest.fn(async () => ({ id: 'u1', role: 'admin', status: 'active', tokenVersion: 0, ...existing })),
+      save: jest.fn(async (user) => user),
+      create: jest.fn((user) => user),
+    };
+    const actions = { create: jest.fn((row) => row), save: jest.fn(async (row) => row) };
+    const service = new AuthService(
+      users as unknown as Repository<User>,
+      { findOne: jest.fn(async () => ({})), save: jest.fn(), create: jest.fn() } as unknown as Repository<UserPoints>,
+      {} as OtpService,
+      { sign: jest.fn(() => 'token') } as unknown as JwtService,
+      { get: (key: string) => ({ GOOGLE_WEB_CLIENT_ID: 'client.apps.googleusercontent.com', ...settings })[key] } as ConfigService,
+      { disconnectUser: jest.fn() } as unknown as ChatsGateway,
+      actions as never,
+    );
+    return { service, actions };
+  }
+
+  it('denies an unlisted administrator without attempting a role change', async () => {
+    verify.mockResolvedValue({ sub: 's9', email: 'former@example.com', name: 'n', picture: '', issuedAt: 0 });
+    const { service, actions } = build({ ADMIN_EMAILS: 'boss@example.com' }, { googleSub: 's9' });
+    await expect(service.oauthLogin('google', { token: 't', provider: 'google' })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(actions.save).not.toHaveBeenCalled();
+  });
+
+  it('leaves manually assigned admins alone when no admin list is configured', async () => {
+    verify.mockResolvedValue({ sub: 's9', email: 'former@example.com', name: 'n', picture: '', issuedAt: 0 });
+    const { service, actions } = build({}, { googleSub: 's9' });
+    expect((await service.oauthLogin('google', { token: 't', provider: 'google' })).user.role).toBe('admin');
+    expect(actions.save).not.toHaveBeenCalled();
+  });
+
+  it('replaces an impersonating Google display name with a neutral one', async () => {
+    verify.mockResolvedValue({ sub: 'new', email: 'x@example.com', name: 'FOUND !T 官方客服', picture: 'https://evil.example/p.png', issuedAt: 0 });
+    const { service } = build({}, {});
+    (service as unknown as { userRepo: { findOne: jest.Mock } }).userRepo.findOne.mockResolvedValue(null);
+    const { user } = await service.oauthLogin('google', { token: 't', provider: 'google' });
+    expect(user.name).toBe('Google 用戶');
+    expect(user.avatarUrl).toBe('');
   });
 });

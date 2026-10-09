@@ -540,8 +540,8 @@ flutter run -d <device-id>
 ```bash
 # Android APK
 flutter build apk \
-  --dart-define=API_BASE_URL=https://api.foundit.com.tw/api/v1 \
-  --dart-define=SOCKET_HOST=https://api.foundit.com.tw \
+  --dart-define=API_BASE_URL=https://api.foundit.tw/api/v1 \
+  --dart-define=SOCKET_HOST=https://api.foundit.tw \
   --dart-define=GOOGLE_WEB_CLIENT_ID=xxx.apps.googleusercontent.com \
   --dart-define=PROD=true
 
@@ -561,7 +561,7 @@ flutter build ipa --dart-define=...（同上）
 | Android 模擬器 | `http://10.0.2.2:3000/api/v1` |
 | iOS 模擬器 | `http://localhost:3000/api/v1` |
 | 實體手機（區網）| `http://192.168.x.x:3000/api/v1` |
-| 正式環境 | `https://api.foundit.com.tw/api/v1` |
+| 正式環境 | `https://api.foundit.tw/api/v1` |
 
 ---
 
@@ -647,8 +647,8 @@ npm run start:prod
 ```bash
 cd foundit_flutter
 flutter build appbundle \
-  --dart-define=API_BASE_URL=https://api.foundit.com.tw/api/v1 \
-  --dart-define=SOCKET_HOST=https://api.foundit.com.tw \
+  --dart-define=API_BASE_URL=https://api.foundit.tw/api/v1 \
+  --dart-define=SOCKET_HOST=https://api.foundit.tw \
   --dart-define=GOOGLE_WEB_CLIENT_ID=你的GoogleClientId \
   --dart-define=PROD=true
 ```

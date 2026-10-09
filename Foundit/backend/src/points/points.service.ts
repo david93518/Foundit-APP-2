@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { UserPoints } from '../common/entities/user-points.entity';
 import { PointEvent, PointEventType } from '../common/entities/point-event.entity';
 
@@ -55,6 +55,7 @@ export class PointsService {
   async getLeaderboard(limit = 20): Promise<UserPoints[]> {
     return this.pointsRepo.find({
       relations: ['user'],
+      where: { points: MoreThan(0), user: { status: 'active' } },
       order: { points: 'DESC' },
       take: limit,
     });

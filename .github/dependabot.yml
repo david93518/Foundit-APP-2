@@ -1,0 +1,24 @@
+# 有新的安全性修補時自動開 PR：後端 npm、Flutter pub、GitHub Actions 與 Docker 基底映像。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /Foundit/backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      nestjs:
+        patterns: ['@nestjs/*']
+  - package-ecosystem: pub
+    directory: /foundit_flutter
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /Foundit/backend
+    schedule:
+      interval: weekly

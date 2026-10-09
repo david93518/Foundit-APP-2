@@ -8,6 +8,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../../data/models/chat.dart';
 import '../constants/app_constants.dart';
 import '../../presentation/providers/core_providers.dart';
+import 'auth_token_store.dart';
 
 /// WebSocket 聊天連線狀態
 enum ChatSocketStatus { idle, connecting, connected, disconnected, error }
@@ -16,7 +17,8 @@ enum ChatSocketStatus { idle, connecting, connected, disconnected, error }
 class ChatReadEvent {
   final String chatId;
   final String userId;
-  const ChatReadEvent(this.chatId, this.userId);
+  final String? upToMessageId;
+  const ChatReadEvent(this.chatId, this.userId, [this.upToMessageId]);
 }
 
 /// 與後端 `chats.gateway.ts`（namespace = `/chat`）對接的單例 WebSocket 服務。
@@ -39,12 +41,16 @@ class ChatSocketService {
   final _messages = StreamController<Message>.broadcast();
   final _reads = StreamController<ChatReadEvent>.broadcast();
   final _status = StreamController<ChatSocketStatus>.broadcast();
+  final _inbox = StreamController<String>.broadcast();
 
   ChatSocketStatus _currentStatus = ChatSocketStatus.idle;
 
   Stream<Message> get messages => _messages.stream;
   Stream<ChatReadEvent> get reads => _reads.stream;
   Stream<ChatSocketStatus> get status => _status.stream;
+
+  /// 我參與的某個對話有新訊息或已讀變動（只有 chatId）。沒開聊天室也收得到，用來更新未讀角標。
+  Stream<String> get inbox => _inbox.stream;
   ChatSocketStatus get currentStatus => _currentStatus;
 
   bool get isConnected => _socket?.connected ?? false;
@@ -52,7 +58,7 @@ class ChatSocketService {
   /// 建立或重用 WebSocket 連線。
   /// 沒有 token 會直接 fail（回傳 false），呼叫端自行決定是否提示登入。
   Future<bool> connect() async {
-    final token = _prefs.getString(AppConstants.prefAuthToken);
+    final token = AuthTokenStore.read(_prefs);
     if (token == null || token.isEmpty) {
       _emitStatus(ChatSocketStatus.error);
       return false;
@@ -94,7 +100,8 @@ class ChatSocketService {
         if (kDebugMode) debugPrint('[ChatSocket] error: $e');
       })
       ..on('message', _handleMessage)
-      ..on('read', _handleRead);
+      ..on('read', _handleRead)
+      ..on('inbox', _handleInbox);
 
     _socket!.connect();
     return true;
@@ -124,6 +131,19 @@ class ChatSocketService {
     _socket?.emit('read', {'chatId': chatId, 'upToMessageId': upToMessageId});
   }
 
+  /// 對方現在是否開著 App；未連線、無權限或逾時回傳 null（不知道）。
+  Future<bool?> peerOnline(String chatId) async {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return null;
+    try {
+      final res = await socket
+          .emitWithAckAsync('presence', {'chatId': chatId})
+          .timeout(const Duration(seconds: 5));
+      if (res is Map && res['chatId'] == chatId) return res['online'] == true;
+    } catch (_) {}
+    return null;
+  }
+
   void disconnect() {
     _token = null;
     _socket?.disconnect();
@@ -137,6 +157,7 @@ class ChatSocketService {
     _messages.close();
     _reads.close();
     _status.close();
+    _inbox.close();
   }
 
   void _handleMessage(dynamic data) {
@@ -158,10 +179,17 @@ class ChatSocketService {
           ChatReadEvent(
             (m['chatId'] ?? m['chat_id'] ?? '').toString(),
             (m['userId'] ?? m['user_id'] ?? '').toString(),
+            (m['upToMessageId'] ?? m['up_to_message_id'])?.toString(),
           ),
         );
       }
     } catch (_) {}
+  }
+
+  void _handleInbox(dynamic data) {
+    if (data is! Map) return;
+    final chatId = (data['chatId'] ?? data['chat_id'] ?? '').toString();
+    if (chatId.isNotEmpty) _inbox.add(chatId);
   }
 
   void _emitStatus(ChatSocketStatus s) {

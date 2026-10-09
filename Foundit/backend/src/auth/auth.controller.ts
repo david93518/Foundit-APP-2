@@ -10,13 +10,28 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
 import { toMobileUser } from '../users/user-mobile.serializer';
+import { InvitedLoginDto } from './dto/invited-login.dto';
+import { FcmTokenDto } from './dto/fcm-token.dto';
+import { RateLimit } from '../common/abuse-limit.interceptor';
 
 @ApiTags('認證')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Post('invited-login')
+  @RateLimit(
+    { name: 'invited-login', limit: 10, windowMs: 60_000, by: 'ip' },
+    { name: 'invited-login-hour', limit: 30, windowMs: 60 * 60_000, by: 'ip' },
+  )
+  @ApiOperation({ summary: '使用已核發的受邀帳號登入' })
+  async invitedLogin(@Body() dto: InvitedLoginDto) {
+    const { token, user } = await this.authService.invitedLogin(dto);
+    return { success: true, token, user: toMobileUser(user) };
+  }
+
   @Post('send-otp')
+  @RateLimit({ name: 'otp-send', limit: 5, windowMs: 10 * 60_000, by: 'ip' })
   @ApiOperation({ summary: '發送手機 OTP 驗證碼' })
   async sendOtp(@Body() dto: SendOtpDto) {
     await this.authService.sendOtp(dto);
@@ -24,6 +39,7 @@ export class AuthController {
   }
 
   @Post('verify-otp')
+  @RateLimit({ name: 'otp-verify', limit: 10, windowMs: 10 * 60_000, by: 'ip' })
   @ApiOperation({ summary: '驗證 OTP 並登入/註冊' })
   async verifyOtp(@Body() dto: VerifyOtpDto) {
     const { token, user } = await this.authService.verifyOtp(dto);
@@ -40,6 +56,7 @@ export class AuthController {
   }
 
   @Post('oauth/:provider')
+  @RateLimit({ name: 'oauth', limit: 20, windowMs: 10 * 60_000, by: 'ip' })
   @ApiOperation({ summary: '第三方 OAuth 登入 (Google / LINE)' })
   async oauthLogin(@Param('provider') provider: string, @Body() dto: OAuthDto) {
     const { token, user } = await this.authService.oauthLogin(provider, dto);
@@ -48,13 +65,11 @@ export class AuthController {
 
   @Patch('fcm-token')
   @UseGuards(JwtAuthGuard)
+  @RateLimit({ name: 'fcm-token', limit: 20, windowMs: 10 * 60_000, by: 'user' })
   @ApiBearerAuth()
   @ApiOperation({ summary: '更新 FCM 推播 Token' })
-  async updateFcmToken(@CurrentUser() user: User, @Body('fcm_token') fcmToken: string) {
-    if (typeof fcmToken !== 'string' || fcmToken.length > 512) {
-      return { success: false, message: '推播識別無效' };
-    }
-    await this.authService.updateFcmToken(user.id, fcmToken);
+  async updateFcmToken(@CurrentUser() user: User, @Body() dto: FcmTokenDto) {
+    await this.authService.updateFcmToken(user.id, dto.fcm_token);
     return { success: true };
   }
 }

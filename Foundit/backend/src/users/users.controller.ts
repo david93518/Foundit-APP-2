@@ -8,10 +8,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
 import { toMobileItem } from '../items/item-mobile.serializer';
 import { toMobileUser } from './user-mobile.serializer';
+import { InvitedLoginDto } from '../auth/dto/invited-login.dto';
+import { RateLimit } from '../common/abuse-limit.interceptor';
+import { CleanText } from '../common/text-safety';
 
 class UpdateProfileDto {
   @ApiProperty({ example: '小明', required: false })
   @IsOptional()
+  @CleanText()
   @IsString()
   @MaxLength(50)
   name?: string;
@@ -19,10 +23,12 @@ class UpdateProfileDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   avatar_url?: string;
 
   @ApiProperty({ example: '台北生活家，喜歡探險', required: false })
   @IsOptional()
+  @CleanText(true)
   @IsString()
   @MaxLength(500)
   bio?: string;
@@ -30,6 +36,7 @@ class UpdateProfileDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsEmail({}, { message: 'Email 格式不正確' })
+  @MaxLength(120)
   email?: string;
 }
 
@@ -62,6 +69,7 @@ export class UsersController {
   }
 
   @Patch('me')
+  @RateLimit({ name: 'profile-update', limit: 30, windowMs: 10 * 60_000, by: 'user' })
   @ApiOperation({ summary: '更新個人資料（name / avatar_url / bio / email）' })
   async updateProfile(@Body() dto: UpdateProfileDto, @CurrentUser() user: User) {
     const data = await this.usersService.updateProfile(user.id, {
@@ -74,6 +82,7 @@ export class UsersController {
   }
 
   @Post('me/delete')
+  @RateLimit({ name: 'account-delete', limit: 5, windowMs: 60_000, by: 'user' })
   @ApiOperation({ summary: '以簡訊驗證碼重新確認後刪除帳號' })
   async deleteAccount(@CurrentUser() user: User, @Body() dto: DeleteAccountDto) {
     await this.usersService.deleteAccount(user.id, dto.otp);
@@ -81,6 +90,7 @@ export class UsersController {
   }
 
   @Post('me/delete-google')
+  @RateLimit({ name: 'account-delete', limit: 5, windowMs: 60_000, by: 'user' })
   @ApiOperation({ summary: '以同一 Google 帳號重新確認後刪除帳號' })
   async deleteGoogleAccount(@CurrentUser() user: User, @Body() dto: DeleteGoogleAccountDto) {
     await this.usersService.deleteGoogleAccount(user.id, dto.idToken);
@@ -91,7 +101,15 @@ export class UsersController {
   @ApiOperation({ summary: '取得我發布的物品' })
   async getMyItems(@CurrentUser() user: User) {
     const data = await this.usersService.getMyItems(user.id);
-    return { success: true, data: data.map(toMobileItem) };
+    return { success: true, data: data.map((item) => toMobileItem(item, user.id)) };
+  }
+
+  @Post('me/delete-invited')
+  @RateLimit({ name: 'account-delete', limit: 5, windowMs: 60_000, by: 'user' })
+  @ApiOperation({ summary: '以受邀帳號密碼重新確認後刪除帳號' })
+  async deleteInvitedAccount(@CurrentUser() user: User, @Body() dto: InvitedLoginDto) {
+    await this.usersService.deleteInvitedAccount(user.id, dto.username, dto.password);
+    return { success: true, message: '帳號已刪除' };
   }
 
   @Get('me/stats')

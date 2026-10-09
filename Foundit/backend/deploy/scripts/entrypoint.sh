@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 
-node -e '
+# 只有掛載的 uploads 目錄需要 root 調整擁有者；其餘步驟（等資料庫、migration、API）都以 node 身分執行。
+chown -R node:node /app/uploads
+chmod 750 /app/uploads
+
+gosu node node -e '
 const { Client } = require("pg");
 (async () => {
   for (let attempt = 1; attempt <= 30; attempt += 1) {
@@ -9,8 +13,8 @@ const { Client } = require("pg");
       host: process.env.DB_HOST,
       port: Number(process.env.DB_PORT || 5432),
       database: process.env.DB_NAME,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASS,
+      user: process.env.DB_MIGRATION_USER || process.env.DB_USER,
+      password: process.env.DB_MIGRATION_USER ? process.env.DB_MIGRATION_PASS : process.env.DB_PASS,
     });
     try {
       await client.connect();
@@ -29,7 +33,8 @@ const { Client } = require("pg");
 })();
 '
 
-node ./node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+gosu node node ./node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+gosu node node dist/upload/migrate-private-media.js
 
-chown -R node:node /app/uploads
-exec gosu node node dist/main.js
+# migration 帳號（可建表）只在上面用一次；API 程序的環境裡不留它的密碼。
+exec env -u DB_MIGRATION_USER -u DB_MIGRATION_PASS gosu node node dist/main.js

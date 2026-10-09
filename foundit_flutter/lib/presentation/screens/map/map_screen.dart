@@ -118,18 +118,49 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
   }
 
-  bool _hasPosition(Item item) =>
-      item.latitude.isFinite &&
-      item.longitude.isFinite &&
-      item.latitude.abs() <= 90 &&
-      item.longitude.abs() <= 180 &&
-      (item.latitude != 0 || item.longitude != 0);
+  Future<void> _showUnlocated(List<Item> items) async {
+    final id = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 640),
+      builder: (sheet) => SizedBox(
+        height: MediaQuery.sizeOf(sheet).height * .65,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          children: [
+            Text(
+              '${items.length} 件尚未標示位置',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            const Text('這些刊登只有地點文字。開啟自己的刊登後，可按「補上地圖位置」。'),
+            const SizedBox(height: 16),
+            for (final item in items)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.location_off_outlined),
+                title: Text(item.title),
+                subtitle: Text(item.locationName),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.pop(sheet, item.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (id != null && mounted) await context.push('/item/$id');
+    if (mounted) ref.invalidate(mapItemsProvider);
+  }
 
   @override
   Widget build(BuildContext context) {
     final result = ref.watch(mapItemsProvider(_type));
     final items = (result.asData?.value ?? const <Item>[])
-        .where((item) => item.status == ItemStatus.active && _hasPosition(item))
+        .where(
+          (item) => item.status == ItemStatus.active && item.hasMapPosition,
+        )
         .toList();
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -289,21 +320,38 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       ),
                       const SizedBox(height: 10),
                     ],
-                    if (items.isNotEmpty) ...[
-                      _FloatingCard(
-                        radius: 24,
-                        child: IconButton(
-                          tooltip: '顯示全部物品',
-                          onPressed: () => _showAll(items),
-                          icon: const Icon(
-                            Icons.zoom_out_map_rounded,
-                            size: 20,
-                            color: AppColors.textPrimary,
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        _FloatingCard(
+                          radius: 24,
+                          child: IconButton(
+                            tooltip: '更新地圖物品',
+                            onPressed: result.isLoading
+                                ? null
+                                : () => ref.invalidate(mapItemsProvider),
+                            icon: const Icon(Icons.refresh_rounded, size: 20),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
+                        if (items.isNotEmpty) ...[
+                          _FloatingCard(
+                            radius: 24,
+                            child: IconButton(
+                              tooltip: '顯示全部物品',
+                              onPressed: () => _showAll(items),
+                              icon: const Icon(
+                                Icons.zoom_out_map_rounded,
+                                size: 20,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 10),
                     _FloatingCard(
                       radius: 24,
                       child: TextButton.icon(
@@ -431,14 +479,41 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ),
       );
     }
+    final unlocated = (result.asData?.value ?? const <Item>[])
+        .where(
+          (item) => item.status == ItemStatus.active && !item.hasMapPosition,
+        )
+        .toList();
+    if (unlocated.isEmpty) {
+      return _FloatingCard(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Text(
+          items.isEmpty ? '這裡還沒有標記' : '${items.length} 件物品已標示位置',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      );
+    }
     return _FloatingCard(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Text(
-        items.isEmpty ? '這裡還沒有標記' : '${items.length} 件物品已標示位置',
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
+      child: InkWell(
+        onTap: unlocated.isEmpty ? null : () => _showUnlocated(unlocated),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Text(
+            unlocated.isNotEmpty
+                ? '${items.length} 件已標示 · ${unlocated.length} 件待補位置 ›'
+                : items.isEmpty
+                ? '這裡還沒有標記'
+                : '${items.length} 件物品已標示位置',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
         ),
       ),
     );

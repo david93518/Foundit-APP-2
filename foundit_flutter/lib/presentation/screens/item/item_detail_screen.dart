@@ -12,6 +12,7 @@ import '../../providers/items_provider.dart';
 import '../../providers/chat_provider.dart';
 import '../../widgets/foundit_ui.dart';
 import '../profile/collection_screen.dart';
+import 'location_picker_screen.dart';
 
 class ItemDetailRoute extends ConsumerWidget {
   const ItemDetailRoute({super.key, required this.id});
@@ -73,6 +74,107 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   final _pager = PageController();
   bool _busy = false;
   int _photo = 0;
+  Item? _updatedItem;
+
+  Future<void> _edit(Item item) async {
+    if (_busy) return;
+    final updated = await context.push<Item>(
+      '/item/${item.id}/edit',
+      extra: item,
+    );
+    if (!mounted || updated == null) return;
+    setState(() {
+      _updatedItem = updated;
+      _photo = 0;
+    });
+    if (_pager.hasClients) _pager.jumpToPage(0);
+    ref.invalidate(itemDetailProvider(item.id));
+  }
+
+  Future<void> _delete(Item item) async {
+    if (_busy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        scrollable: true,
+        title: const Text('刪除這則刊登？'),
+        content: const Text('刊登將從首頁、地圖與我的刊登移除，無法復原。已有的對話會保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('保留刊登'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('確認刪除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final ok = await ref.read(itemRepositoryProvider).delete(item.id);
+      if (!ok) throw StateError('delete failed');
+      if (!mounted) return;
+      ref.invalidate(itemsProvider);
+      ref.invalidate(mapItemsProvider);
+      ref.invalidate(collectionProvider);
+      ref.invalidate(itemDetailProvider(item.id));
+      ref.invalidate(itemStatsProvider);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('刊登已刪除。')));
+      context.go('/my-items');
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('尚未刪除，請檢查連線後重試。')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _editLocation(Item item) async {
+    if (_busy) return;
+    final picked = await context.push<LocationPickedResult>(
+      '/location-picker',
+      extra: {
+        'query': item.locationName,
+        if (item.hasMapPosition) 'lat': item.latitude,
+        if (item.hasMapPosition) 'lng': item.longitude,
+      },
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final updated = await ref
+          .read(itemRepositoryProvider)
+          .updateLocation(
+            item.id,
+            picked.latitude,
+            picked.longitude,
+            picked.address,
+          );
+      if (updated == null) throw StateError('Location was not saved');
+      if (!mounted) return;
+      setState(() => _updatedItem = updated);
+      ref.invalidate(itemsProvider);
+      ref.invalidate(mapItemsProvider);
+      ref.invalidate(collectionProvider(false));
+      ref.invalidate(itemDetailProvider(item.id));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('地圖位置已更新。')));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('位置尚未儲存，請檢查連線後再試。')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -243,6 +345,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   }
 
   Future<void> _resolve() async {
+    if (_busy) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
@@ -266,6 +369,8 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
       final ok = await ref.read(itemRepositoryProvider).resolve(widget.item.id);
       if (!ok) throw StateError('resolve failed');
       ref.invalidate(itemsProvider);
+      ref.invalidate(mapItemsProvider);
+      ref.invalidate(itemStatsProvider);
       ref.invalidate(collectionProvider(false));
       ref.invalidate(itemDetailProvider(widget.item.id));
       if (mounted) context.go('/my-items');
@@ -280,7 +385,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   }
 
   void _openPhoto(int index) {
-    final item = widget.item;
+    final item = _updatedItem ?? widget.item;
     if (item.images.isEmpty) return;
     context.push(
       '/photo-viewer',
@@ -304,7 +409,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final item = widget.item;
+    final item = _updatedItem ?? widget.item;
     final saved = ref.watch(savedItemsProvider).contains(item.id);
     final mock = ref.watch(useMockProvider);
     final mine =
@@ -440,6 +545,29 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   }) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
+      if (mine) ...[
+        const Text('你的刊登', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            if (item.status == ItemStatus.active)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : () => _edit(item),
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('編輯刊登'),
+              ),
+            TextButton.icon(
+              onPressed: _busy ? null : () => _delete(item),
+              style: TextButton.styleFrom(foregroundColor: AppColors.error),
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('刪除刊登'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+      ],
       if (item.images.length > 1) ...[
         _Thumbnails(
           images: item.images,
@@ -499,6 +627,20 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
         onTap: item.locationName.isEmpty ? null : () => _openMap(item),
         actionLabel: '在地圖中開啟',
       ),
+      if (!item.hasMapPosition)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: Text(
+            '目前只有地點文字，尚未顯示在 App 地圖。',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+        ),
+      if (mine && item.status == ItemStatus.active)
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => _editLocation(item),
+          icon: const Icon(Icons.add_location_alt_outlined),
+          label: Text(item.hasMapPosition ? '調整地圖位置' : '補上地圖位置'),
+        ),
       _Fact(
         icon: Icons.calendar_today_outlined,
         label: item.type == ItemType.found ? '拾獲日期' : '遺失日期',

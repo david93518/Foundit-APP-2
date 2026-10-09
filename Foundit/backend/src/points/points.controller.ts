@@ -21,7 +21,9 @@ export class PointsController {
   }
 
   @Get('leaderboard')
-  @ApiOperation({ summary: '積分排行榜' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '積分排行榜（需登入）' })
   async getLeaderboard() {
     const rows = await this.pointsService.getLeaderboard();
     return {

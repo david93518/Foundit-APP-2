@@ -36,10 +36,13 @@ String? parseQrCode(String raw) {
 }
 
 class QrScanScreen extends ConsumerStatefulWidget {
-  const QrScanScreen({super.key, this.cameraPreview});
+  const QrScanScreen({super.key, this.cameraPreview, this.initialCode});
 
   /// Optional non-camera surface for layout tests; production uses MobileScanner.
   final Widget? cameraPreview;
+
+  /// 從手機相機掃到貼紙網址開進 App 時帶入的代碼：直接查詢，不必再掃一次。
+  final String? initialCode;
   @override
   ConsumerState<QrScanScreen> createState() => _QrScanScreenState();
 }
@@ -51,6 +54,17 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
   bool _handled = false;
   bool _togglingTorch = false;
   String? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    final code = widget.initialCode;
+    if (code != null && code.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !ref.read(useMockProvider)) _lookup(code);
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -77,16 +91,29 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
     if (_handled || ref.read(useMockProvider)) return;
     final raw = capture.barcodes.firstOrNull?.rawValue;
     if (raw == null || raw.trim().isEmpty) return;
-    setState(() => _handled = true);
-    try {
-      await _controller.stop();
-      final code = parseQrCode(raw);
-      if (code == null) {
+    final code = parseQrCode(raw);
+    if (code == null) {
+      setState(() => _handled = true);
+      try {
+        await _controller.stop();
         if (mounted) {
           AppSnackbar.error(context, '無法識別這個 QR 碼，請掃描 FOUND !T 防丟牌。');
         }
-        return;
+      } finally {
+        await _resume();
       }
+      return;
+    }
+    await _lookup(code);
+  }
+
+  /// 查詢防丟牌並顯示結果；相機在結果關閉後才重新啟動。
+  Future<void> _lookup(String code) async {
+    if (_handled) return;
+    setState(() => _handled = true);
+    try {
+      // 從網址開進來時相機可能還在啟動；停不了也不影響查詢。
+      await _scanner?.stop().catchError((_) {});
       final result = await ref.read(qrRepositoryProvider).scanByCode(code);
       if (!mounted) return;
       final myId = ref.read(authProvider).user?.id;
@@ -97,23 +124,33 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
         builder: (sheetContext) => QrScanResultSheet(
           itemName: result.qrItem.name,
           ownerName: result.ownerName,
-          isOwnTag: myId != null && myId == result.ownerId,
+          isOwnTag: result.isOwnTag || (myId != null && myId == result.ownerId),
           onContact: () => Navigator.pop(sheetContext, true),
           onContinue: () => Navigator.pop(sheetContext),
         ),
       );
       if (contact == true && mounted) await _contactOwner(code);
-    } catch (_) {
-      if (mounted) AppSnackbar.error(context, '暫時無法查詢這張防丟牌，請確認網路後再試。');
+    } catch (error) {
+      if (!mounted) return;
+      final status = error is DioException
+          ? error.response?.statusCode ?? 0
+          : 0;
+      AppSnackbar.error(
+        context,
+        status == 404 ? '這張防丟牌已失效或已被物主移除。' : '暫時無法查詢這張防丟牌，請確認網路後再試。',
+      );
     } finally {
-      if (mounted) {
-        setState(() => _handled = false);
-        try {
-          await _controller.start();
-        } catch (_) {
-          if (mounted) AppSnackbar.error(context, '相機暫時無法開啟，請確認相機權限後重新進入。');
-        }
-      }
+      await _resume();
+    }
+  }
+
+  Future<void> _resume() async {
+    if (!mounted) return;
+    setState(() => _handled = false);
+    try {
+      await _controller.start();
+    } catch (_) {
+      if (mounted) AppSnackbar.error(context, '相機暫時無法開啟，請確認相機權限後重新進入。');
     }
   }
 
@@ -130,7 +167,9 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
       await context.push('/chat/${chat.id}', extra: chat);
     } catch (error) {
       if (!mounted) return;
-      final status = error is DioException ? error.response?.statusCode ?? 0 : 0;
+      final status = error is DioException
+          ? error.response?.statusCode ?? 0
+          : 0;
       final message = status >= 400 && status < 500
           ? apiErrorMessage(error)
           : null;
@@ -435,7 +474,10 @@ class QrScanResultSheet extends StatelessWidget {
                       backgroundColor: AppColors.primary,
                       foregroundColor: AppColors.onPrimary,
                     ),
-                    icon: const Icon(Icons.chat_bubble_outline_rounded, size: 20),
+                    icon: const Icon(
+                      Icons.chat_bubble_outline_rounded,
+                      size: 20,
+                    ),
                     label: const Text('傳訊息給物主'),
                   ),
                   const SizedBox(height: 12),

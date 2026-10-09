@@ -1,11 +1,12 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { QrItem } from '../common/entities/qr-item.entity';
 import { User } from '../common/entities/user.entity';
-import { GenerateQrDto } from './dto/generate-qr.dto';
+import { GenerateQrDto, UpdateQrDto } from './dto/generate-qr.dto';
+import { findSensitiveData } from '../common/text-safety';
 
 @Injectable()
 export class QrService {
@@ -28,6 +29,9 @@ export class QrService {
   }
 
   async generate(dto: GenerateQrDto, user: User): Promise<QrItem> {
+    // 撿到的人掃描後會看到物品名稱；聯絡一律走站內訊息，名稱裡不放電話或 email。
+    const sensitive = findSensitiveData(dto.name);
+    if (sensitive) throw new BadRequestException(`物品名稱不能包含${sensitive}，撿到的人會透過站內訊息聯絡你`);
     const code = randomUUID();
     const baseUrl = this.baseUrl();
     const qrItem = this.qrRepo.create({
@@ -41,17 +45,32 @@ export class QrService {
     return this.qrRepo.save(qrItem);
   }
 
+  /** 撤銷（刪除）的貼紙保留紀錄給舊對話用，但不再出現在物主的清單。 */
   async findAllByUser(userId: string): Promise<QrItem[]> {
     return this.qrRepo.find({
-      where: { userId },
+      where: { userId, revokedAt: IsNull() },
       order: { createdAt: 'DESC' },
     });
   }
 
+  /** 只改名稱與備註；貼紙代碼不變，已經印出來的 QR 繼續有效。 */
+  async update(id: string, dto: UpdateQrDto, user: User): Promise<QrItem> {
+    const qrItem = await this.qrRepo.findOne({ where: { id } });
+    if (!qrItem || qrItem.revokedAt) throw new NotFoundException('QR 物品不存在');
+    if (qrItem.userId !== user.id) throw new ForbiddenException('無權限修改此 QR');
+    const sensitive = findSensitiveData(dto.name);
+    if (sensitive) throw new BadRequestException(`物品名稱不能包含${sensitive}，撿到的人會透過站內訊息聯絡你`);
+    qrItem.name = dto.name;
+    qrItem.description = dto.description ?? '';
+    return this.qrRepo.save(qrItem);
+  }
+
+  /** 重複刪除（例如連點兩次）視為成功。 */
   async remove(id: string, user: User): Promise<void> {
     const qrItem = await this.qrRepo.findOne({ where: { id } });
     if (!qrItem) throw new NotFoundException('QR 物品不存在');
     if (qrItem.userId !== user.id) throw new ForbiddenException('無權限刪除此 QR');
+    if (qrItem.revokedAt) return;
     qrItem.revokedAt = new Date();
     await this.qrRepo.save(qrItem);
   }
@@ -69,7 +88,7 @@ export class QrService {
         suffix: `%/${normalized}`,
       })
       .getOne();
-    if (!qrItem || qrItem.revokedAt || qrItem.user?.status === 'deleted') {
+    if (!qrItem || qrItem.revokedAt || qrItem.user?.status !== 'active') {
       throw new NotFoundException('QR Code 無效或已失效');
     }
     return { qrItem, owner: qrItem.user };

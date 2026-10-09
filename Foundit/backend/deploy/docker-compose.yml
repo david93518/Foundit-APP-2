@@ -26,8 +26,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:?}
-      POSTGRES_USER: ${DB_USER:?}
-      POSTGRES_PASSWORD: ${DB_PASS:?}
+      # 資料庫擁有者（超級使用者）只給 migration 用；API 用 DB_USER 的受限帳號，見 scripts/db-least-privilege.sql。
+      POSTGRES_USER: ${DB_MIGRATION_USER:-${DB_USER:?}}
+      POSTGRES_PASSWORD: ${DB_MIGRATION_PASS:-${DB_PASS:?}}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -64,6 +65,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SEED_SAMPLE_DATA: "false"
+      # 這個部署由 nginx 轉發，來源 IP 在 X-Real-IP（nginx 會覆寫使用者自帶的值）。
+      CLIENT_IP_HEADER: x-real-ip
     volumes:
       - uploads:/app/uploads
     depends_on:

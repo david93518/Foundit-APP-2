@@ -9,8 +9,16 @@ export interface GoogleIdentity {
   issuedAt: number;
 }
 
+// 共用 client 才會快取 Google 的簽章公鑰，不必每次登入都重抓。
+const clients = new Map<string, OAuth2Client>();
+
 export async function verifyGoogleIdToken(idToken: string, audience: string): Promise<GoogleIdentity> {
-  const client = new OAuth2Client(audience);
+  if (typeof idToken !== 'string' || idToken.length > 8192) throw new Error('Google id_token 格式不正確');
+  let client = clients.get(audience);
+  if (!client) {
+    client = new OAuth2Client(audience);
+    clients.set(audience, client);
+  }
   const ticket = await client.verifyIdToken({ idToken, audience });
   const payload = ticket.getPayload();
   const sub = payload?.sub;
