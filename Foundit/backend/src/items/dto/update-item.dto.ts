@@ -1,5 +1,5 @@
 import {
-  IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ArrayMaxSize,
+  Equals, IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -7,6 +7,10 @@ import { CleanText } from '../../common/text-safety';
 
 /** 使用者可改的欄位。主鍵、擁有人與狀態不在這裡。 */
 export class UpdateItemDto {
+  @IsOptional()
+  @Equals('ncku')
+  campusCode?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @CleanText()

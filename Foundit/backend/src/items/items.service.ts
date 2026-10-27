@@ -1,3 +1,5 @@
+import { PointsService } from '../points/points.service';
+import { PointEventType } from '../common/entities/point-event.entity';
 import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional,
 } from '@nestjs/common';
@@ -9,6 +11,7 @@ import { User } from '../common/entities/user.entity';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { QueryItemDto } from './dto/query-item.dto';
+import { campusForCoordinates } from './campus';
 import { normalizeCoordinates } from './coordinates';
 import { isUuid } from '../common/ids';
 import { isOwnUpload, publicBaseUrl, uploadSecret } from '../common/media-url';
@@ -33,6 +36,7 @@ export class ItemsService {
     @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @Optional() @InjectRepository(User) private readonly userRepo?: Repository<User>,
     @Optional() private readonly config?: ConfigService,
+    @Optional() private readonly points?: PointsService,
   ) {}
 
   private statsCache: { expires: number; value: Promise<ItemStats> } | null = null;
@@ -56,7 +60,7 @@ export class ItemsService {
     }
   }
 
-  async findAll(query: QueryItemDto): Promise<{ data: Item[]; total: number; hasMore: boolean }> {
+  async findAll(query: QueryItemDto, viewerId?: string): Promise<{ data: Item[]; total: number; hasMore: boolean }> {
     const page = query.page ?? 1;
     const pageSize = Math.min(query.page_size ?? 20, 50);
 
@@ -66,6 +70,8 @@ export class ItemsService {
       .where('item.status = :status', { status: ItemStatus.ACTIVE })
       .andWhere('item.hidden_at IS NULL');
 
+    if (viewerId) qb.andWhere('NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id=:viewer AND b.blocked_id=item.user_id)', {viewer:viewerId});
+    if (query.campus) qb.andWhere('item.campus_code = :campus', { campus: query.campus });
     this.applyFilters(qb, query);
 
     qb.orderBy('item.createdAt', 'DESC')
@@ -101,8 +107,10 @@ export class ItemsService {
       await this.userRepo.update(user.id, { termsVersion: dto.termsVersion.trim() });
     }
     const coords = normalizeCoordinates(dto.latitude, dto.longitude);
+    if (dto.campusCode && coords && !campusForCoordinates(coords.latitude, coords.longitude)) throw new BadRequestException('選擇的位置不在成大校區內，全台刊登請使用 App');
     const item = this.itemRepo.create({
       type: dto.type,
+      campusCode: dto.campusCode ?? campusForCoordinates(coords?.latitude, coords?.longitude),
       userId: user.id,
       title: dto.title.trim(),
       category: dto.category.trim(),
@@ -119,7 +127,11 @@ export class ItemsService {
       handedToPolice: dto.handedToPolice ?? false,
       status: ItemStatus.ACTIVE,
     });
-    const saved = await this.itemRepo.save(item);
+    const saved = this.points ? await this.itemRepo.manager.transaction(async manager => {
+      const row = await manager.save(Item, item);
+      if (row.type === ItemType.FOUND) await this.points!.award(user.id, PointEventType.FOUND_ITEM, row.id, '登記撿到物品', manager);
+      return row;
+    }) : await this.itemRepo.save(item);
     saved.user = user;
     return saved;
   }
@@ -147,11 +159,22 @@ export class ItemsService {
     if (dto.lostAt !== undefined) changes.lostAt = new Date(dto.lostAt);
     if (dto.latitude !== undefined || dto.longitude !== undefined) {
       const coords = normalizeCoordinates(
-        dto.latitude ?? (changes.latitude == null ? null : Number(item.latitude)),
-        dto.longitude ?? (changes.longitude == null ? null : Number(item.longitude)),
+        dto.latitude !== undefined ? dto.latitude : (item.latitude == null ? null : Number(item.latitude)),
+        dto.longitude !== undefined ? dto.longitude : (item.longitude == null ? null : Number(item.longitude)),
       );
       changes.latitude = coords?.latitude ?? null;
       changes.longitude = coords?.longitude ?? null;
+    }
+    if (dto.campusCode) {
+      const latitude = changes.latitude !== undefined ? changes.latitude : item.latitude;
+      const longitude = changes.longitude !== undefined ? changes.longitude : item.longitude;
+      if (latitude != null && longitude != null && !campusForCoordinates(Number(latitude), Number(longitude))) {
+        throw new BadRequestException('選擇的位置不在成大校區內，全台刊登請使用 App');
+      }
+      changes.campusCode = dto.campusCode;
+    }
+    else if (dto.latitude !== undefined || dto.longitude !== undefined) {
+      changes.campusCode = campusForCoordinates(changes.latitude, changes.longitude);
     }
     const result = await this.itemRepo.update(
       { id, userId: user.id, status: ItemStatus.ACTIVE, hiddenAt: IsNull() }, changes,
@@ -175,12 +198,27 @@ export class ItemsService {
   async resolve(id: string, user: User): Promise<void> {
     const item = await this.findOne(id, user.id);
     if (item.userId !== user.id) throw new ForbiddenException('無權限操作此物品');
-    if (item.status === ItemStatus.RESOLVED) return;
+    if (item.status === ItemStatus.RESOLVED) {
+      await this.points?.award(user.id, PointEventType.MATCH_SUCCESS, id, '成功尋回物品');
+      return;
+    }
     const result = await this.itemRepo.update(
       { id, userId: user.id, status: ItemStatus.ACTIVE, hiddenAt: IsNull() },
       { status: ItemStatus.RESOLVED },
     );
     if (result.affected !== 1) throw new BadRequestException('此刊登已結束');
+    await this.points?.award(user.id, PointEventType.MATCH_SUCCESS, id, '成功尋回物品');
+  }
+
+  async reopen(id: string, user: User): Promise<void> {
+    const item = await this.findOne(id, user.id);
+    if (item.userId !== user.id) throw new ForbiddenException('無權限操作此物品');
+    if (item.status === ItemStatus.ACTIVE) return;
+    const result = await this.itemRepo.update(
+      { id, userId: user.id, status: ItemStatus.RESOLVED, hiddenAt: IsNull() },
+      { status: ItemStatus.ACTIVE },
+    );
+    if (result.affected !== 1) throw new BadRequestException('此刊登無法重新開啟');
   }
 
   async findByUser(userId: string): Promise<Item[]> {

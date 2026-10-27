@@ -165,10 +165,13 @@ export class UsersService {
       .execute();
       await manager.update(QrItem, { userId }, { revokedAt: now, name: '已移除的物品', description: '', qrImageUrl: '' });
       await manager.update(Notification, { userId }, { title: '', content: '' });
+      await manager.query("SELECT set_config('foundit.user_id',$1,true)", [userId]);
+      await manager.query('SELECT campus.erase_member($1)', [userId]);
+      await manager.query('DELETE FROM saved_items WHERE user_id=$1', [userId]);
       await manager.update(User, { id: userId }, {
         status: 'deleted', tokenVersion: () => '"token_version" + 1',
         phone: `deleted:${userId}`.slice(0, 100), name: '已刪除的使用者',
-        email: '', bio: '', avatarUrl: '', googleSub: null, fcmToken: null, isVerified: false,
+        email: '', verifiedEmail: '', bio: '', avatarUrl: '', googleSub: null, fcmToken: null, isVerified: false,
       });
     });
     this.gateway.disconnectUser(userId);
@@ -195,10 +198,11 @@ export class UsersService {
       this.itemsService.countByUserAndType(userId, ItemType.LOST),
     ]);
 
+    const [saved] = await this.userRepo.manager.query("SELECT count(*)::int AS count FROM saved_items s JOIN items i ON i.id=s.item_id WHERE s.user_id=$1 AND i.hidden_at IS NULL AND (i.status='ACTIVE' OR i.user_id=$1)", [userId]);
     return {
       posted,
       helpful,
-      bookmarks: 0,
+      bookmarks: saved.count,
       found_count: foundCount,
       lost_count: lostCount,
     };

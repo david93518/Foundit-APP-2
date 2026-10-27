@@ -33,7 +33,8 @@ export class QrLandingController {
       '這個物品已登記',
       this.escape(qrItem.name || '未命名物品'),
       `<p class="lead">撿到了嗎？物主有登記這件物品，用 FOUND !T 就能直接傳訊息給物主。</p>
-<a class="btn primary" href="${openInApp}">已安裝 FOUND !T：在 App 開啟</a>
+<a class="btn primary" href="https://app.foundit.tw/#/tag?code=${encodeURIComponent(code.trim())}">直接用網頁聯絡物主</a>
+<a class="btn" href="${openInApp}">已安裝 FOUND !T：在 App 開啟</a>
 ${download ? `<a class="btn" href="${this.escape(download)}">下載 FOUND !T</a>` : ''}
 <p class="hint">如果按鈕沒有反應：打開 FOUND !T，點下方的「＋」選「掃描防丟牌」，再掃一次這張貼紙。</p>
 <p class="hint">這個頁面不會顯示電話、email 或其他私人聯絡方式；物主只會知道有人掃描了貼紙。</p>`,

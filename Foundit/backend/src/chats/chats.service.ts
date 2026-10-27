@@ -80,6 +80,7 @@ export class ChatsService {
         return { id: again.id, created: false };
       }
     });
+    await this.chatRepo.manager.query('DELETE FROM hidden_chats WHERE user_id=$1 AND chat_id=$2', [requester.id,chatId]);
     const chat = await this.loadChat(chatId);
     if (created && subject.isQr) {
       this.background(() => this.chatPush.tagScanned(chat, requester, subject.title));
@@ -113,6 +114,7 @@ export class ChatsService {
       .leftJoinAndSelect('chat.participants', 'participant')
       .leftJoinAndSelect('chat.item', 'item')
       .leftJoinAndSelect('chat.qrItem', 'qrItem')
+      .where('NOT EXISTS (SELECT 1 FROM hidden_chats h WHERE h.chat_id=chat.id AND h.user_id=:uid AND h.hidden_at >= chat.updated_at)', { uid: userId })
       .orderBy('chat.updated_at', 'DESC')
       .getMany();
 
@@ -153,6 +155,7 @@ export class ChatsService {
       .createQueryBuilder('m')
       .innerJoin('chat_participants', 'cp', 'cp.chat_id = m.chat_id')
       .where('cp.user_id = :uid', { uid: userId })
+      .andWhere('NOT EXISTS (SELECT 1 FROM hidden_chats h JOIN chats c ON c.id=h.chat_id WHERE h.chat_id=m.chat_id AND h.user_id=:uid AND h.hidden_at>=c.updated_at)')
       .andWhere('m.sender_id != :uid', { uid: userId })
       .andWhere('m.read_at IS NULL')
       .getCount();

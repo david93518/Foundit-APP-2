@@ -8,6 +8,10 @@ import { ItemType } from '../../common/entities/item.entity';
 import { CleanText } from '../../common/text-safety';
 
 export class CreateItemDto {
+  @IsOptional()
+  @Equals('ncku')
+  campusCode?: string;
+
   @ApiProperty({ enum: ItemType })
   @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsEnum(ItemType)

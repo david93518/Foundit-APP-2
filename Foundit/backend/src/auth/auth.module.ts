@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { WebAuthController } from './web-auth.controller';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
@@ -28,7 +29,7 @@ import { readJwtExpiresIn, readJwtSecret } from './jwt-secret';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, WebAuthController],
   providers: [AuthService, JwtStrategy, OtpService],
   exports: [AuthService, OtpService],
 })

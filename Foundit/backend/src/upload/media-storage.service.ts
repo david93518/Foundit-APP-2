@@ -5,7 +5,7 @@ import { mkdir, readFile, readdir, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { PRIVATE_DIRECTORY, SAFE_IMAGE_NAME } from './private-media';
 
-export type MediaScope = 'public' | 'chat';
+export type MediaScope = 'public' | 'chat' | 'staff';
 
 /** Buckets stay private; public photos and authorized chat photos use separate prefixes. */
 @Injectable()
@@ -30,6 +30,7 @@ export class MediaStorageService {
     return `${scope}/${name}`;
   }
   private directory(scope: MediaScope) {
+    if (scope === 'staff') return join(process.cwd(), 'uploads', '.staff');
     return scope === 'chat' ? join(process.cwd(), 'uploads', PRIVATE_DIRECTORY) : join(process.cwd(), 'uploads');
   }
   async list(scope: MediaScope): Promise<string[]> {
@@ -56,7 +57,7 @@ export class MediaStorageService {
     const key = this.key(scope, name);
     if (this.client) {
       await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data,
-        ContentType: 'image/jpeg', CacheControl: scope === 'chat' ? 'private, no-store' : 'public, max-age=604800' }));
+        ContentType: 'image/jpeg', CacheControl: scope !== 'public' ? 'private, no-store' : 'public, max-age=604800' }));
     } else {
       await mkdir(this.directory(scope), { recursive: true });
       await writeFile(join(this.directory(scope), name), data, { mode: 0o640 });

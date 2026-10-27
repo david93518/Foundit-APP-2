@@ -1,3 +1,5 @@
+import { CampusModule } from './campus/campus.module';
+import { InteropModule } from './interop/interop.module';
 import { Module } from '@nestjs/common';
 import { LocationsModule } from './locations/locations.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -60,6 +62,8 @@ import { UploadCleanup } from './common/entities/upload-cleanup.entity';
       inject: [ConfigService],
     }),
     AuthModule,
+    InteropModule,
+    CampusModule,
     LocationsModule,
     UsersModule,
     ItemsModule,

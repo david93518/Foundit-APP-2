@@ -18,6 +18,7 @@ export function toMobileItem(item: ItemWithUser, viewerId: string | null): Recor
   };
   return {
     id: item.id,
+    campus_code: item.campusCode ?? '',
     type: item.type,
     user_id: owner ? item.userId : '',
     user_name: u?.name ?? '',

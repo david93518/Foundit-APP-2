@@ -1,9 +1,13 @@
-import { IsOptional, IsString, IsEnum, IsBoolean, IsInt, IsNumber, Max, MaxLength, Min } from 'class-validator';
+import { Equals, IsOptional, IsString, IsEnum, IsBoolean, IsInt, IsNumber, Max, MaxLength, Min } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ItemType, ItemStatus } from '../../common/entities/item.entity';
 
 export class QueryItemDto {
+  @IsOptional()
+  @Equals('ncku')
+  campus?: string;
+
   @ApiPropertyOptional({ enum: ItemType })
   @IsOptional()
   @Transform(({ value }) =>

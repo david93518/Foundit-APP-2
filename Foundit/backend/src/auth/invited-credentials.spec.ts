@@ -78,7 +78,7 @@ describe('Explicitly provisioned invited account', () => {
     const qr = {update: jest.fn()};
     const manager = {
       findOne: jest.fn(async () => user), find: jest.fn(async () => []),
-      getRepository: () => content, upsert: jest.fn(), update: jest.fn(),
+      getRepository: () => content, upsert: jest.fn(), update: jest.fn(), query: jest.fn().mockResolvedValue([]),
     };
     (repo as any).manager = { transaction: (work: any) => work(manager) };
     const gateway = {disconnectUser: jest.fn()};
@@ -89,5 +89,6 @@ describe('Explicitly provisioned invited account', () => {
     expect(manager.update).toHaveBeenCalledWith(User, {id}, expect.objectContaining({status: 'deleted', tokenVersion: expect.any(Function)}));
     expect(gateway.disconnectUser).toHaveBeenCalledWith(id);
     expect(manager.upsert).toHaveBeenCalled();
+    expect(manager.query).toHaveBeenCalledWith('SELECT campus.erase_member($1)', [id]);
   });
 });

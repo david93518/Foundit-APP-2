@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Repository } from 'typeorm';
+import { EntityManager, MoreThan, Repository } from 'typeorm';
 import { UserPoints } from '../common/entities/user-points.entity';
 import { PointEvent, PointEventType } from '../common/entities/point-event.entity';
 
@@ -27,6 +27,28 @@ export class PointsService {
       take: 50,
     });
     return { points: userPoints.points, history };
+  }
+
+  /** Serializes an account's awards and records the cause before incrementing its total. */
+  async award(userId: string, type: PointEventType, reference: string, description: string, transaction?: EntityManager): Promise<boolean> {
+    const apply = async (manager: EntityManager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['points:' + userId]);
+      if (type === PointEventType.QR_SCAN) {
+        const [count] = await manager.query(`SELECT count(*)::int AS n FROM point_awards WHERE user_id=$1 AND kind=$2
+          AND (created_at AT TIME ZONE 'Asia/Taipei')::date = (now() AT TIME ZONE 'Asia/Taipei')::date`, [userId,type]);
+        if (count.n >= 5) return false;
+      }
+      const inserted = await manager.query(`INSERT INTO point_awards(user_id,kind,reference) VALUES($1,$2,$3)
+        ON CONFLICT DO NOTHING RETURNING user_id`, [userId,type,reference]);
+      if (!inserted.length) return false;
+      const points = POINT_VALUES[type];
+      const [total] = await manager.query(`INSERT INTO user_points(user_id,points) VALUES($1,$2)
+        ON CONFLICT(user_id) DO UPDATE SET points=user_points.points+$2, updated_at=now() RETURNING id`, [userId,points]);
+      await manager.query('INSERT INTO point_events(user_points_id,type,points,description) VALUES($1,$2,$3,$4)',
+        [total.id,type,points,description]);
+      return true;
+    };
+    return transaction ? apply(transaction) : this.pointsRepo.manager.transaction(apply);
   }
 
   async addPoints(

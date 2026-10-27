@@ -1,8 +1,11 @@
+import '../../data/api/api_client.dart';
+
 import 'dart:convert';
 import 'dart:math' as math;
 
 export 'brand_mark.dart';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,8 +52,15 @@ String savedItemKey(SharedPreferences prefs, String itemId) =>
     'bookmark:${savedNamespace(prefs)}:$itemId';
 
 class SavedItemsNotifier extends StateNotifier<Set<String>> {
-  SavedItemsNotifier(this.ref) : super(_read(ref));
+  SavedItemsNotifier(this.ref) : super(_read(ref)) {
+    ownerId = ref.read(authProvider).user?.id;
+    ready = synchronize().catchError((Object _) {});
+  }
   final Ref ref;
+  late final String? ownerId;
+  late final Future<void> ready;
+  final Set<String> _pending = {};
+  bool get remote => !ref.read(useMockProvider) && ownerId != null;
 
   static Set<String> _read(Ref ref) {
     final prefs = ref.read(sharedPreferencesProvider);
@@ -62,12 +72,86 @@ class SavedItemsNotifier extends StateNotifier<Set<String>> {
         .toSet();
   }
 
-  Future<void> toggle(String id) async {
-    final next = {...state};
-    if (!next.add(id)) next.remove(id);
-    state = next;
+  Future<void> synchronize() async {
+    if (!remote || !mounted) return;
+    final api = ref.read(apiClientProvider);
     final prefs = ref.read(sharedPreferencesProvider);
-    await prefs.setBool(savedItemKey(prefs, id), next.contains(id));
+    final marker = 'bookmarks-api-v1:$ownerId';
+    // Preserve this account's existing phone bookmarks once; subsequent reads are server-authoritative.
+    if (prefs.getBool(marker) != true) {
+      for (final id in {...state}) {
+        if (!mounted) return;
+        try {
+          await api.dio.put<Map<String, dynamic>>('/users/me/bookmarks/$id');
+        } catch (error) {
+          if (error is! DioException ||
+              ![400, 404].contains(error.response?.statusCode)) {
+            rethrow;
+          }
+        }
+      }
+      if (!mounted) return;
+      await prefs.setBool(marker, true);
+    }
+    final result = await api.get<Map<String, dynamic>>('/users/me/bookmarks');
+    if (!mounted) return;
+    final ids = (result.data?['data'] as List? ?? [])
+        .whereType<String>()
+        .toSet();
+    if (ids.length != state.length || !ids.containsAll(state)) state = ids;
+    final prefix = 'bookmark:$ownerId:';
+    for (final key in prefs.getKeys().where((k) => k.startsWith(prefix))) {
+      if (!ids.contains(key.substring(prefix.length))) await prefs.remove(key);
+    }
+    for (final id in ids) {
+      await prefs.setBool('$prefix$id', true);
+    }
+  }
+
+  Future<void> toggle(String id) async {
+    if (!_pending.add(id)) return;
+    try {
+      await ready;
+      if (!mounted) return;
+      final on = !state.contains(id);
+      if (remote) {
+        final api = ref.read(apiClientProvider);
+        if (on) {
+          await api.dio.put<Map<String, dynamic>>('/users/me/bookmarks/$id');
+        } else {
+          await api.delete<Map<String, dynamic>>('/users/me/bookmarks/$id');
+        }
+      }
+      if (!mounted) return;
+      final next = {...state};
+      if (on) {
+        next.add(id);
+      } else {
+        next.remove(id);
+      }
+      state = next;
+      await ref
+          .read(sharedPreferencesProvider)
+          .setBool('bookmark:${ownerId ?? 'guest'}:$id', on);
+    } finally {
+      _pending.remove(id);
+    }
+  }
+}
+
+Future<void> toggleSavedItem(
+  BuildContext context,
+  WidgetRef ref,
+  String id,
+) async {
+  try {
+    await ref.read(savedItemsProvider.notifier).toggle(id);
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(apiErrorMessage(error) ?? '收藏同步失敗，請稍後重試')),
+      );
+    }
   }
 }
 
@@ -330,7 +414,7 @@ class _FoundItemCardState extends ConsumerState<FoundItemCard> {
         button: true,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => ref.read(savedItemsProvider.notifier).toggle(item.id),
+          onTap: () => toggleSavedItem(context, ref, item.id),
           child: SizedBox(
             width: 48,
             height: 48,

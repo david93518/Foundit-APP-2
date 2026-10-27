@@ -444,8 +444,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               color: saved
                   ? AppColors.primary.light
                   : AppColors.textPrimary.light,
-              onTap: () =>
-                  ref.read(savedItemsProvider.notifier).toggle(item.id),
+              onTap: () => toggleSavedItem(context, ref, item.id),
             ),
           ],
         ),

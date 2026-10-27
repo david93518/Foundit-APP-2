@@ -50,7 +50,7 @@ async function bootstrap() {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
-  app.enableCors({ origin: production ? origins : (origins.length > 0 ? origins : true) });
+  app.enableCors({ credentials: true, origin: production ? origins : (origins.length > 0 ? origins : true) });
 
   // 靜態資源：圖片上傳目錄
   const uploadsDir = join(process.cwd(), 'uploads');

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
+import { assertActiveSession, AccessTokenPayload } from './session';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
@@ -104,6 +105,7 @@ export class AuthService {
       if (!user.name) user.name = displayNameFromGoogle(identity.name);
       if (!user.avatarUrl) user.avatarUrl = picture;
       user.email = identity.email.slice(0, 120);
+      user.verifiedEmail = identity.email.toLowerCase().slice(0, 120);
       user.isVerified = true;
       user = await this.userRepo.save(user);
       user = await this.syncAdminRole(user, identity.email);
@@ -116,6 +118,7 @@ export class AuthService {
       name: displayNameFromGoogle(identity.name),
       avatarUrl: picture,
       email: identity.email.slice(0, 120),
+      verifiedEmail: identity.email.toLowerCase().slice(0, 120),
       isVerified: true,
       role: 'user',
       status: 'active',
@@ -181,6 +184,18 @@ export class AuthService {
       throw new UnauthorizedException('管理員資格需由管理者重新確認');
     }
     return user;
+  }
+
+  tokenExpiry(token: string): number {
+    return Number(this.jwtService.decode(token).exp) * 1000;
+  }
+
+  async webSession(token: string): Promise<User> {
+    try {
+      const payload = this.jwtService.verify<AccessTokenPayload>(token, { algorithms: ['HS256'] });
+      const user = await this.userRepo.findOne({ where: { id: payload.sub } });
+      return assertActiveSession(user, payload.tv);
+    } catch { throw new UnauthorizedException('登入已失效，請重新登入'); }
   }
 
   private sign(user: User): string {

@@ -24,7 +24,7 @@ export class ItemsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: '取得物品列表（支援篩選）' })
   async findAll(@Query() query: QueryItemDto, @CurrentUser() user: User) {
-    const { data, total, hasMore } = await this.itemsService.findAll(query);
+    const { data, total, hasMore } = await this.itemsService.findAll(query, user.id);
     return { success: true, data: data.map((item) => toMobileItem(item, user.id)), total, hasMore };
   }
 
@@ -78,6 +78,13 @@ export class ItemsController {
   async remove(@Param('id') id: string, @CurrentUser() user: User) {
     await this.itemsService.remove(id, user);
     return { success: true, message: '已刪除' };
+  }
+
+  @Patch(':id/reopen')
+  @UseGuards(JwtAuthGuard)
+  async reopen(@Param('id') id: string, @CurrentUser() user: User) {
+    await this.itemsService.reopen(id, user);
+    return { success: true };
   }
 
   @Patch(':id/resolve')
