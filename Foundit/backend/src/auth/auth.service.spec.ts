@@ -79,6 +79,20 @@ describe('AuthService oauth boundary', () => {
     await expect(service.oauthLogin('google', { token: 'valid', provider: 'google' })).rejects.toBeInstanceOf(UnauthorizedException);
     expect(users.save).not.toHaveBeenCalled();
   });
+
+  it('keeps the installed App audience and maps a dedicated browser client to the same verified subject', async () => {
+    const config = { get: (key: string) => ({ GOOGLE_WEB_CLIENT_ID: 'mobile-client', GOOGLE_BROWSER_CLIENT_ID: 'browser-client' }[key]) } as ConfigService;
+    const shared = new AuthService(users as any, {} as any, {} as any,
+      { sign: jest.fn(() => 'session') } as any, config, {} as any);
+    verify.mockResolvedValue({ sub: 'same-google-subject', email: 'member@example.test', name: 'Member', picture: '', issuedAt: 1 });
+    users.findOne.mockResolvedValue({ id: 'existing-app-user', googleSub: 'same-google-subject', status: 'active', role: 'user' });
+    const mobile = await shared.oauthLogin('google', { provider: 'google', token: 'mobile-id-token' });
+    const browser = await shared.oauthLogin('google', { provider: 'google', token: 'browser-id-token' }, true);
+    expect(verify).toHaveBeenNthCalledWith(1, 'mobile-id-token', 'mobile-client');
+    expect(verify).toHaveBeenNthCalledWith(2, 'browser-id-token', 'browser-client');
+    expect(browser.user.id).toBe(mobile.user.id);
+    expect(users.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('AuthService admin promotion by email', () => {

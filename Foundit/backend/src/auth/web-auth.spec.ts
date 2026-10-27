@@ -50,6 +50,7 @@ describe('Web session boundary', () => {
       response,
     );
     const options = response.cookie.mock.calls[0][2];
+    expect(auth.oauthLogin).toHaveBeenCalledWith('google', expect.any(Object), true);
     expect(options).toMatchObject({
       secure: true,
       httpOnly: true,

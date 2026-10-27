@@ -54,7 +54,7 @@ export class WebAuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     this.origin(req);
-    const session = await this.auth.oauthLogin('google', dto);
+    const session = await this.auth.oauthLogin('google', dto, true);
     await this.db.query(
       'INSERT INTO campus.members(user_id) VALUES($1) ON CONFLICT(user_id) DO UPDATE SET last_seen=now()',
       [session.user.id],

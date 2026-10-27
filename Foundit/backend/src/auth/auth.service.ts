@@ -73,12 +73,14 @@ export class AuthService {
     return { token: this.sign(user), user };
   }
 
-  async oauthLogin(provider: string, dto: OAuthDto): Promise<{ token: string; user: User }> {
+  async oauthLogin(provider: string, dto: OAuthDto, browser = false): Promise<{ token: string; user: User }> {
     const name = provider.toLowerCase().trim();
     if (name !== 'google') {
       throw new BadRequestException('此登入方式尚未開放');
     }
-    const audience = this.config.get<string>('GOOGLE_WEB_CLIENT_ID')?.trim();
+    // A dedicated browser client must not replace the audience embedded in installed Apps.
+    const audience = (browser ? this.config.get<string>('GOOGLE_BROWSER_CLIENT_ID')?.trim() : '') ||
+      this.config.get<string>('GOOGLE_WEB_CLIENT_ID')?.trim();
     if (!audience) {
       throw new BadRequestException('Google 登入尚未開放');
     }
