@@ -8,5 +8,11 @@
   },
   "vars": {
     "RENDER_ORIGIN": "https://foundit-api-0p3h.onrender.com"
-  }
+  },
+  "routes": [
+    {
+      "zone_name": "foundit.tw",
+      "pattern": "api.foundit.tw/*"
+    }
+  ]
 }
