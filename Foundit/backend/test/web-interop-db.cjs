@@ -4,6 +4,7 @@ const { pathToFileURL } = require('node:url');
 const { resolve } = require('node:path');
 const { WebInterop1793059200000 } = require('../dist/database/migrations/1793059200000-WebInterop');
 const { Campus1793059201000 } = require('../dist/database/migrations/1793059201000-Campus');
+const { LegacyCampus1793059202000 } = require('../dist/database/migrations/1793059202000-LegacyCampus');
 const { CampusService } = require('../dist/campus/campus.service');
 const { PointsService } = require('../dist/points/points.service');
 async function main() {
@@ -14,7 +15,7 @@ async function main() {
     await db.exec(`CREATE ROLE foundit_qa;
       CREATE TYPE item_status AS ENUM('ACTIVE','RESOLVED','CLOSED'); CREATE TYPE item_type AS ENUM('LOST','FOUND');
       CREATE TABLE users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text DEFAULT '',email text DEFAULT '',google_sub text,role text DEFAULT 'user',status text DEFAULT 'active',created_at timestamptz DEFAULT now());
-      CREATE TABLE items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid REFERENCES users(id),type item_type,status item_status,hidden_at timestamptz,latitude numeric,longitude numeric,created_at timestamptz DEFAULT now());
+      CREATE TABLE items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid REFERENCES users(id),type item_type,status item_status,hidden_at timestamptz,latitude numeric,longitude numeric,location_name text DEFAULT '',created_at timestamptz DEFAULT now());
       CREATE TABLE chats(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),item_id uuid,created_at timestamptz DEFAULT now());
       CREATE TABLE user_points(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid UNIQUE REFERENCES users(id),points int DEFAULT 0,updated_at timestamptz DEFAULT now());
       CREATE TABLE point_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_points_id uuid,type text,points int,description text);
@@ -27,6 +28,15 @@ async function main() {
     await new Campus1793059201000().up({query});
     assert.equal((await query('SELECT count(*)::int AS n FROM users'))[0].n, 3, 'mobile accounts preserved');
     assert.equal((await query("SELECT count(*)::int AS n FROM items WHERE campus_code='ncku'"))[0].n, 1, 'NCKU geofence backfill');
+    await db.exec(`INSERT INTO items(location_name,latitude,longitude) VALUES
+      ('成大',NULL,NULL),('國立成功大學',NULL,NULL),('成大',25.03,121.56),('成大附近',NULL,NULL),('清華大學',NULL,NULL)`);
+    const beforeRepair = await query('SELECT id,user_id,type,status,hidden_at,latitude,longitude,location_name,created_at FROM items ORDER BY id');
+    await new LegacyCampus1793059202000().up({query});
+    assert.equal((await query("SELECT count(*)::int AS n FROM items WHERE campus_code='ncku'"))[0].n, 3, 'legacy exact NCKU names are included');
+    assert.equal((await query("SELECT count(*)::int AS n FROM items WHERE campus_code='ncku' AND latitude=25.03"))[0].n, 0, 'outside coordinates override campus names');
+    assert.deepEqual(await query('SELECT id,user_id,type,status,hidden_at,latitude,longitude,location_name,created_at FROM items ORDER BY id'), beforeRepair, 'repair preserves all listing data except campus classification');
+    await new LegacyCampus1793059202000().up({query});
+    assert.equal((await query("SELECT count(*)::int AS n FROM items WHERE campus_code='ncku'"))[0].n, 3, 'repair is idempotent');
     await db.exec('SET ROLE foundit_qa');
     // Match TypeORM PostgresQueryRunner's UPDATE/DELETE tuple result, not only pg.rows.
     const manager = {query:async(sql,params) => {const result=await db.query(sql,params);return /^\s*(UPDATE|DELETE)\b/i.test(sql)?[result.rows,result.affectedRows]:result.rows;}};

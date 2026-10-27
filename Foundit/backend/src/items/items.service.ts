@@ -11,7 +11,7 @@ import { User } from '../common/entities/user.entity';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { QueryItemDto } from './dto/query-item.dto';
-import { campusForCoordinates } from './campus';
+import { campusForCoordinates, campusForLocation } from './campus';
 import { normalizeCoordinates } from './coordinates';
 import { isUuid } from '../common/ids';
 import { isOwnUpload, publicBaseUrl, uploadSecret } from '../common/media-url';
@@ -110,7 +110,7 @@ export class ItemsService {
     if (dto.campusCode && coords && !campusForCoordinates(coords.latitude, coords.longitude)) throw new BadRequestException('選擇的位置不在成大校區內，全台刊登請使用 App');
     const item = this.itemRepo.create({
       type: dto.type,
-      campusCode: dto.campusCode ?? campusForCoordinates(coords?.latitude, coords?.longitude),
+      campusCode: dto.campusCode ?? campusForLocation(coords?.latitude, coords?.longitude, dto.locationName),
       userId: user.id,
       title: dto.title.trim(),
       category: dto.category.trim(),
@@ -173,8 +173,12 @@ export class ItemsService {
       }
       changes.campusCode = dto.campusCode;
     }
-    else if (dto.latitude !== undefined || dto.longitude !== undefined) {
-      changes.campusCode = campusForCoordinates(changes.latitude, changes.longitude);
+    else if (dto.latitude !== undefined || dto.longitude !== undefined || dto.locationName !== undefined) {
+      changes.campusCode = campusForLocation(
+        changes.latitude !== undefined ? changes.latitude : item.latitude,
+        changes.longitude !== undefined ? changes.longitude : item.longitude,
+        changes.locationName !== undefined ? changes.locationName : item.locationName,
+      );
     }
     const result = await this.itemRepo.update(
       { id, userId: user.id, status: ItemStatus.ACTIVE, hiddenAt: IsNull() }, changes,

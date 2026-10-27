@@ -148,3 +148,15 @@ export function campusForCoordinates(
     ? 'ncku'
     : '';
 }
+
+/** Legacy App posts can identify the campus by name without a map pin. */
+export function campusForLocation(
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  locationName?: string | null,
+): string {
+  // A real or partial coordinate must never be overridden by a text label.
+  if (lat != null || lng != null) return campusForCoordinates(lat, lng);
+  const name = (locationName ?? '').replace(/\s+/g, '').toLowerCase();
+  return ['成大', '成功大學', '國立成功大學', 'ncku', 'nationalchengkunguniversity'].includes(name) ? 'ncku' : '';
+}
