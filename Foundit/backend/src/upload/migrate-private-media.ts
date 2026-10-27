@@ -10,6 +10,15 @@ export async function migratePrivateMedia(): Promise<void> {
   const base = process.env.APP_BASE_URL?.trim().replace(/\/$/, '');
   if (!base) throw new Error('APP_BASE_URL is required for private media migration');
   const origin = new URL(base).origin;
+  // R2 migrations are performed separately; never rewrite missing local files as deleted images.
+  if (process.env.MEDIA_STORAGE === 'r2') {
+    const [row] = await AppDataSource.query(
+      "SELECT count(*)::int AS count FROM messages WHERE type = 'image' AND content LIKE $1",
+      [origin + '/uploads/%'],
+    );
+    if (row.count > 0) throw new Error('Legacy chat images must be migrated before enabling R2');
+    return;
+  }
   const root = join(process.cwd(), 'uploads');
   const directory = join(root, PRIVATE_DIRECTORY);
   await mkdir(directory, { recursive: true, mode: 0o750 });

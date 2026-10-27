@@ -1,4 +1,5 @@
 import { isIP } from 'net';
+import { authenticatedOrigin } from './origin-auth';
 
 /**
  * 正式環境的請求都經過 Cloudflare Tunnel：TCP 對端永遠是本機或 Docker 內網，
@@ -30,6 +31,11 @@ export function clientIp(request: {
   socket?: { remoteAddress?: string };
   connection?: { remoteAddress?: string };
 }): string {
+  // Managed ingress may change its TCP peer. Only our authenticated Worker can supply this header.
+  if (authenticatedOrigin(request)) {
+    const address = request.headers?.['x-foundit-client-ip'];
+    if (typeof address === 'string' && isIP(address)) return stripMapped(address);
+  }
   const peer = request.socket?.remoteAddress ?? request.connection?.remoteAddress ?? '';
   // Only explicitly listed proxy peers may supply a client address. A private subnet is not a trust boundary.
   const trusted = (process.env.TRUSTED_PROXY_ADDRESSES ?? '127.0.0.1,::1')

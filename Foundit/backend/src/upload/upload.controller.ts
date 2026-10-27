@@ -3,8 +3,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import { join } from 'path';
-import { mkdir, readdir, stat, writeFile } from 'fs/promises';
 import sharp from 'sharp';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -17,7 +15,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Message, MessageType } from '../common/entities/message.entity';
 import type { Response } from 'express';
-import { PRIVATE_DIRECTORY, PRIVATE_MEDIA_PATH, SAFE_IMAGE_NAME } from './private-media';
+import { PRIVATE_MEDIA_PATH, SAFE_IMAGE_NAME } from './private-media';
+import { MediaStorageService } from './media-storage.service';
 
 const MAX_PIXELS = 16_000_000;
 const ALLOWED = new Set(['jpeg', 'png', 'webp', 'gif', 'heif']);
@@ -51,6 +50,7 @@ export class UploadController {
   constructor(
     private readonly config: ConfigService,
     @InjectRepository(Message) private readonly messages: Repository<Message>,
+    private readonly media: MediaStorageService,
   ) {}
 
   @Get('chat-images/:name')
@@ -66,10 +66,9 @@ export class UploadController {
         .getCount();
       if (count === 0) throw new NotFoundException();
     }
-    const file = join(process.cwd(), 'uploads', PRIVATE_DIRECTORY, name);
-    if (!await stat(file).then(info => info.isFile()).catch(() => false)) throw new NotFoundException();
+    const image = await this.media.read('chat', name);
     response.set('Cache-Control', 'private, no-store').vary('Authorization');
-    response.type('image/jpeg').sendFile(file, { dotfiles: 'allow' });
+    response.type('image/jpeg').send(image);
   }
 
   @Post('image')
@@ -90,12 +89,8 @@ export class UploadController {
     const base = publicBaseUrl(this.config);
     if (!base) throw new BadRequestException('上傳服務尚未設定公開網址');
 
-    const root = join(process.cwd(), 'uploads');
-    const directory = scope === 'chat' ? join(root, PRIVATE_DIRECTORY) : root;
-    await mkdir(directory, { recursive: true });
     const secret = uploadSecret(this.config);
-    const existing = (await Promise.all([root, join(root, PRIVATE_DIRECTORY)]
-      .map(dir => readdir(dir).catch(() => [] as string[])))).flat();
+    const existing = (await Promise.all([this.media.list('public'), this.media.list('chat')])).flat();
     const owned = existing.filter((name) => isOwnUploadName(name, user.id, secret)).length;
     if (owned >= 40) throw new BadRequestException('上傳數量已達上限');
 
@@ -123,7 +118,7 @@ export class UploadController {
 
     // 檔名不含帳號 id：網址公開後也看不出是誰上傳、無法串起同一人的照片，但伺服器仍能驗證擁有者。
     const filename = newUploadName(user.id, secret);
-    await writeFile(join(directory, filename), output, { mode: 0o640 });
+    await this.media.put(scope, filename, output);
     return { success: true, url: `${base}${scope === 'chat' ? PRIVATE_MEDIA_PATH : '/uploads/'}${filename}` };
   }
 }

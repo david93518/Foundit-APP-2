@@ -5,6 +5,7 @@ import { ServerOptions } from 'socket.io';
 import { clientIp } from '../common/client-ip';
 import { limiterKeyForIp } from '../common/abuse-limit.interceptor';
 import { FixedWindowLimiter } from '../common/fixed-window-limiter';
+import { allowedOrigin } from '../common/origin-auth';
 
 export class SocketIoAdapter extends IoAdapter {
   /** 每個來源 IP 每分鐘最多建立 30 條 Socket.IO 連線（握手），擋連線洪水。 */
@@ -22,6 +23,7 @@ export class SocketIoAdapter extends IoAdapter {
       // 文字訊息上限 2000 字，64 KB 足夠；預設 1 MB 讓單一封包就能吃掉大量記憶體。
       maxHttpBufferSize: 64 * 1024,
       allowRequest: (req: IncomingMessage, callback: (err: string | null | undefined, ok: boolean) => void) => {
+        if (!allowedOrigin(req)) return callback('Forbidden', false);
         callback(null, this.handshakes.allow(limiterKeyForIp(clientIp(req as never))));
       },
       cors: options?.cors ?? {

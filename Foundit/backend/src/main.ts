@@ -13,6 +13,8 @@ import { LANDING_CSP, securityHeaders } from './common/security-headers';
 import { FixedWindowLimiter } from './common/fixed-window-limiter';
 import { clientIp } from './common/client-ip';
 import { limiterKeyForIp } from './common/abuse-limit.interceptor';
+import { MediaStorageService } from './upload/media-storage.service';
+import { allowedOrigin } from './common/origin-auth';
 
 async function bootstrap() {
   // 只解析 JSON：兩個 App 都不送 form-urlencoded，關掉它就少一個解析器（qs）暴露在外。
@@ -23,6 +25,11 @@ async function bootstrap() {
   const production = process.env.NODE_ENV === 'production';
 
   app.disable('x-powered-by');
+  app.use((req: Request, res: Response, next: () => void) => {
+    if (req.method === 'GET' && req.path === '/api/v1/health') return next();
+    if (!allowedOrigin(req)) return res.status(403).json({ success: false, message: 'Forbidden' });
+    next();
+  });
   app.use(securityHeaders(production));
   // 每個來源 IP 每分鐘最多 600 個請求。放在所有守衛之前，未登入、token 錯誤或打到不存在路徑的請求也會計入。
   const globalLimiter = new FixedWindowLimiter(600, 60_000);
@@ -48,7 +55,18 @@ async function bootstrap() {
   // 靜態資源：圖片上傳目錄
   const uploadsDir = join(process.cwd(), 'uploads');
   if (!existsSync(uploadsDir)) mkdirSync(uploadsDir);
-  app.useStaticAssets(uploadsDir, {
+  if (process.env.MEDIA_STORAGE === 'r2') {
+    const media = app.get(MediaStorageService);
+    app.getHttpAdapter().get('/uploads/:name', async (req, res, next) => {
+      try {
+        const image = await media.read('public', String((req as Request).params.name));
+        (res as Response).type('image/jpeg').set('Cache-Control', 'public, max-age=604800').send(image);
+      } catch (error) {
+        if ((error as { getStatus?: () => number }).getStatus?.() === 404) (res as Response).status(404).end();
+        else next?.(error);
+      }
+    });
+  } else app.useStaticAssets(uploadsDir, {
     prefix: '/uploads',
     dotfiles: 'deny',
     index: false,
