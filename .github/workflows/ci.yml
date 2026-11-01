@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # test 是要部署的整合分支：Render 設成「CI 通過才自動部署」，所以 push／合併到 test 也要跑。
+    branches: [main, master, test]
   pull_request:
   workflow_dispatch:
 
