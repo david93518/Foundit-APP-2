@@ -46,7 +46,8 @@ SELECT format('GRANT SELECT, INSERT, UPDATE ON TABLE public.%I TO %I', tablename
 FROM pg_tables WHERE schemaname = 'public' AND tablename IN (
   'users', 'items', 'chats', 'chat_participants', 'messages', 'notifications', 'qr_items',
   'user_points', 'point_events', 'reports', 'user_blocks', 'admin_actions',
-  'chat_rate_limits', 'upload_cleanup_jobs', 'saved_items', 'hidden_chats', 'point_awards') \gexec
+  'chat_rate_limits', 'upload_cleanup_jobs', 'saved_items', 'hidden_chats', 'point_awards',
+  'qr_batches', 'line_links', 'qr_finder_notices') \gexec
 -- 僅解除封鎖與完成的檔案清理工作需要 DELETE。
 SELECT format('GRANT DELETE ON TABLE public.user_blocks TO %I', :'app_user') \gexec
 SELECT format('GRANT DELETE ON TABLE public.upload_cleanup_jobs TO %I', :'app_user') \gexec
@@ -54,6 +55,8 @@ SELECT format('GRANT DELETE ON TABLE public.%I TO %I', tablename, :'app_user') F
 -- 稽核紀錄只能追加，執行中的 API 無法竄改或刪除既有紀錄。
 SELECT format('REVOKE UPDATE, DELETE ON TABLE public.admin_actions FROM %I', :'app_user') \gexec
 SELECT format('REVOKE UPDATE, DELETE ON TABLE public.%I FROM %I', tablename, :'app_user') FROM pg_tables WHERE schemaname='public' AND tablename='point_awards' \gexec
+-- 撿到的人留給物主的留言只能追加（也用來計算頻率限制），API 不能事後改寫。
+SELECT format('REVOKE UPDATE, DELETE ON TABLE public.%I FROM %I', tablename, :'app_user') FROM pg_tables WHERE schemaname='public' AND tablename='qr_finder_notices' \gexec
 -- migration 紀錄與 API 無關。
 SELECT format('REVOKE ALL ON TABLE public.%I FROM %I', tablename, :'app_user')
 FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('migrations', 'typeorm_metadata') \gexec

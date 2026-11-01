@@ -17,6 +17,3 @@ export class GenerateQrDto {
   @MaxLength(500)
   description?: string;
 }
-
-/** 編輯防丟牌：欄位與建立時相同。 */
-export class UpdateQrDto extends GenerateQrDto {}

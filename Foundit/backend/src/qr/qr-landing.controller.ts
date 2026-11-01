@@ -13,32 +13,44 @@ export class QrLandingController {
   ) {}
 
   async page(code: string, visitor: { method?: string; userAgent?: string } = {}): Promise<string> {
-    if (code === 'scan' || code === 'items' || code === 'generate') {
+    if (code === 'scan' || code === 'items' || code === 'generate' || code === 'status' || code === 'bind') {
       throw new NotFoundException();
     }
-    let found: Awaited<ReturnType<QrService['scanByCode']>>;
-    try {
-      found = await this.qrService.scanByCode(code);
-    } catch {
+    const { state, qrItem } = await this.qrService.inspect(code);
+    if (state === 'unbound') {
+      return this.html(
+        '這張貼紙尚未啟用',
+        '這張貼紙還沒有主人',
+        '<p class="lead">拿到這張貼紙的人，請登入 FOUND !T，用掃描功能掃這張貼紙的 QR Code，就能綁定到自己的帳號。</p>',
+      );
+    }
+    if (state !== 'active' || !qrItem?.user || qrItem.user.status !== 'active') {
       return this.html('這個 QR 已失效', '找不到可聯絡的物品', '<p>貼紙可能已撤銷或連結不正確。</p>');
     }
-    const { qrItem, owner } = found;
     if (visitor.method === 'GET' && QrScanNotifier.isHumanBrowser(visitor.userAgent)) {
-      this.scanNotifier?.scanned(qrItem, owner, 'web');
+      this.scanNotifier?.scanned(qrItem, qrItem.user, 'web');
     }
-    // scanByCode 已限制代碼只含英數與連字號，可以直接放進網址。
-    const openInApp = `foundit://qr/${code.trim()}`;
+    // inspect 已限制代碼只含英數與連字號，可以直接放進網址。
+    const sticker = qrItem.code ?? code.trim();
+    const openInApp = `foundit://qr/${sticker}`;
     const download = this.downloadUrl();
     return this.html(
       '這個物品已登記',
       this.escape(qrItem.name || '未命名物品'),
       `<p class="lead">撿到了嗎？物主有登記這件物品，用 FOUND !T 就能直接傳訊息給物主。</p>
-<a class="btn primary" href="https://app.foundit.tw/#/tag?code=${encodeURIComponent(code.trim())}">直接用網頁聯絡物主</a>
+<a class="btn primary" href="https://app.foundit.tw/#/tag?code=${encodeURIComponent(sticker)}">直接用網頁聯絡物主</a>
+<a class="btn" href="${this.escape(this.lineUrl())}">加 LINE 通知物主${/^[A-Z0-9]{6}$/.test(sticker) ? `（貼紙編號 ${sticker}）` : ''}</a>
 <a class="btn" href="${openInApp}">已安裝 FOUND !T：在 App 開啟</a>
 ${download ? `<a class="btn" href="${this.escape(download)}">下載 FOUND !T</a>` : ''}
 <p class="hint">如果按鈕沒有反應：打開 FOUND !T，點下方的「＋」選「掃描防丟牌」，再掃一次這張貼紙。</p>
 <p class="hint">這個頁面不會顯示電話、email 或其他私人聯絡方式；物主只會知道有人掃描了貼紙。</p>`,
     );
+  }
+
+  /** 撿到的人最快的路：加官方 LINE，傳貼紙編號給平台，由平台轉達給物主。只接受 https。 */
+  private lineUrl(): string {
+    const url = this.config?.get<string>('LINE_ADD_FRIEND_URL')?.trim() ?? '';
+    return /^https:\/\/[^\s"'<>]+$/.test(url) ? url : 'https://line.me/R/ti/p/@807uehgn';
   }
 
   /** App Store／TestFlight 公開連結；只接受 https，未設定時不顯示下載按鈕。 */

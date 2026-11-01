@@ -34,3 +34,11 @@ The old API container remains stopped. Its database and backups remain available
 ## Remaining product work
 
 Web member features still need API integration. Mobile store submission is not part of hosting deployment. FCM configuration was absent in the source environment, so production push notifications remain unconfigured. This deployment has one API instance and no database HA; do not describe it as highly available or assign a user-capacity figure without a representative load test.
+
+## LINE finder flow and bound stickers (2026-11)
+
+- Migration `1793059203000-BoundQrAndLine` adds `qr_batches`, `line_links`, `qr_finder_notices` and the `qr_items` columns `batch_id`, `bound_at`, `disabled_at` (`user_id` becomes nullable; existing self-made tags are backfilled as bound). After it runs, reapply `deploy/scripts/db-least-privilege-managed.sql` as the database owner so the runtime role can use the new tables (finder notices are append-only).
+- Render environment: `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_FINDER_URL` (all three or the webhook returns 503), optional `LINE_ADD_FRIEND_URL`; add the `LINE_FINDER_URL` origin to `CORS_ORIGINS`. Keep `QR_SELF_GENERATE` unset (= true) until the bind-only App replaces old builds.
+- LINE Developers webhook URL: `https://api.foundit.tw/api/v1/line/webhook`. It must go through the Worker, which adds the origin token; the Render hostname is refused with 403 by design. The Worker forwards the body unchanged, so the signature still verifies.
+- No Cloudflare purchase is needed: Workers Free covers 100,000 requests/day across the brand, platform and API proxy. Watch the daily request graph; above that limit the routes stop answering, and Workers Paid (US$5/month) would be required.
+

@@ -10,6 +10,7 @@ import { ItemsModule } from './items/items.module';
 import { ChatsModule } from './chats/chats.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { QrModule } from './qr/qr.module';
+import { LineModule } from './line/line.module';
 import { PushModule } from './push/push.module';
 import { PointsModule } from './points/points.module';
 import { AiModule } from './ai/ai.module';
@@ -29,6 +30,9 @@ import { PointEvent } from './common/entities/point-event.entity';
 import { Report } from './common/entities/report.entity';
 import { Block } from './common/entities/block.entity';
 import { AdminAction } from './common/entities/admin-action.entity';
+import { QrBatch } from './common/entities/qr-batch.entity';
+import { LineLink } from './common/entities/line-link.entity';
+import { QrFinderNotice } from './common/entities/qr-finder-notice.entity';
 import { DatabaseModule } from './database/database.module';
 import { ChatRateLimit } from './common/entities/chat-rate-limit.entity';
 import { UploadCleanup } from './common/entities/upload-cleanup.entity';
@@ -52,7 +56,7 @@ import { UploadCleanup } from './common/entities/upload-cleanup.entity';
           database: config.get<string>('DB_NAME', 'foundit'),
           username: config.get<string>('DB_USER', 'foundit_user'),
           password,
-          entities: [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction, ChatRateLimit, UploadCleanup],
+          entities: [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction, ChatRateLimit, UploadCleanup, QrBatch, LineLink, QrFinderNotice],
           synchronize: !production,
           // 正式環境的執行帳號只有資料讀寫權限；擴充套件與 schema 由 migration 帳號負責。
           installExtensions: !production,
@@ -70,6 +74,7 @@ import { UploadCleanup } from './common/entities/upload-cleanup.entity';
     ChatsModule,
     NotificationsModule,
     QrModule,
+    LineModule,
     PushModule,
     PointsModule,
     AiModule,

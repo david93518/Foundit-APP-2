@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, GoneException, NotFoundException } from '@nestjs/common';
 import { IsNull } from 'typeorm';
 import { QrService } from './qr.service';
 import { QrScanNotifier } from './qr-scan-notifier.service';
@@ -22,7 +22,7 @@ function serviceWith(row: QrItem | null) {
     save: jest.fn(async (value: QrItem) => value),
   };
   const config = { get: (_: string, fallback?: string) => fallback };
-  return { service: new QrService(repo as never, config as never), repo };
+  return { service: new QrService(repo as never, {} as never, config as never), repo };
 }
 
 describe('QrService tag management', () => {
@@ -53,6 +53,31 @@ describe('QrService tag management', () => {
     const { service, repo } = serviceWith(tag({ revokedAt: new Date() }));
     await expect(service.remove('tag-1', owner)).resolves.toBeUndefined();
     expect(repo.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('QrService legacy self-generated tags', () => {
+  function generator(env: Record<string, string> = {}) {
+    const repo = { create: (v: object) => v, save: jest.fn(async (v: object) => v) };
+    const config = { get: (key: string, fallback?: string) => env[key] ?? fallback };
+    return new QrService(repo as never, {} as never, config as never);
+  }
+
+  it('keeps old App builds working: generated tags are bound to the creator at once', async () => {
+    const created = await generator().generate({ name: '鑰匙' }, owner);
+    expect(created).toMatchObject({ userId: 'owner', name: '鑰匙' });
+    expect((created as { boundAt: Date }).boundAt).toBeInstanceOf(Date);
+  });
+
+  it('can be switched off once the bind-only App ships', async () => {
+    await expect(generator({ QR_SELF_GENERATE: 'false' }).generate({ name: '鑰匙' }, owner))
+      .rejects.toBeInstanceOf(GoneException);
+  });
+
+  it('rejects contact details in a bound sticker name too', async () => {
+    const { service } = serviceWith(null);
+    await expect(service.bind({ code: 'ABC234', name: '背包 0912345678' }, owner))
+      .rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -92,20 +117,28 @@ describe('QrScanNotifier', () => {
 });
 
 describe('QR landing page', () => {
-  const scanByCode = jest.fn().mockResolvedValue({ qrItem: tag({ name: '<b>包包</b>' }), owner });
+  const inspect = jest.fn().mockResolvedValue({ state: 'active', qrItem: { ...tag({ name: '<b>包包</b>' }), user: owner } });
+  const scanByCode = inspect;
 
   it('offers to open the tag in the app and notifies the owner for real phone scans', async () => {
     const scanned = jest.fn();
-    const page = new QrLandingController({ scanByCode } as never, { scanned } as never);
+    const page = new QrLandingController({ inspect: scanByCode } as never, { scanned } as never);
     const html = await page.page('code-1234', { method: 'GET', userAgent: IPHONE });
     expect(html).toContain('href="foundit://qr/code-1234"');
     expect(html).toContain('&lt;b&gt;包包&lt;/b&gt;');
     expect(scanned).toHaveBeenCalledWith(expect.anything(), owner, 'web');
   });
 
+  it('explains unbound stickers and offers the LINE route on bound ones', async () => {
+    const unbound = new QrLandingController({ inspect: async () => ({ state: 'unbound', qrItem: tag() }) } as never);
+    expect(await unbound.page('ABC234')).toContain('這張貼紙尚未啟用');
+    const page = new QrLandingController({ inspect } as never);
+    expect(await page.page('code-1234')).toContain('line.me');
+  });
+
   it('does not notify for HEAD requests or bots', async () => {
     const scanned = jest.fn();
-    const page = new QrLandingController({ scanByCode } as never, { scanned } as never);
+    const page = new QrLandingController({ inspect: scanByCode } as never, { scanned } as never);
     await page.page('code-1234', { method: 'HEAD', userAgent: IPHONE });
     await page.page('code-1234', { method: 'GET', userAgent: 'Slackbot-LinkExpanding 1.0' });
     expect(scanned).not.toHaveBeenCalled();
@@ -113,9 +146,9 @@ describe('QR landing page', () => {
 
   it('only shows a download button for an https link', async () => {
     const config = (url: string) => ({ get: () => url });
-    const withLink = new QrLandingController({ scanByCode } as never, undefined, config('https://testflight.apple.com/join/abc') as never);
+    const withLink = new QrLandingController({ inspect: scanByCode } as never, undefined, config('https://testflight.apple.com/join/abc') as never);
     expect(await withLink.page('code-1234')).toContain('https://testflight.apple.com/join/abc');
-    const unsafe = new QrLandingController({ scanByCode } as never, undefined, config('javascript:alert(1)') as never);
+    const unsafe = new QrLandingController({ inspect: scanByCode } as never, undefined, config('javascript:alert(1)') as never);
     expect(await unsafe.page('code-1234')).not.toContain('javascript:');
   });
 });

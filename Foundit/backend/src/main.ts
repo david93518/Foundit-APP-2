@@ -18,7 +18,8 @@ import { allowedOrigin } from './common/origin-auth';
 
 async function bootstrap() {
   // 只解析 JSON：兩個 App 都不送 form-urlencoded，關掉它就少一個解析器（qs）暴露在外。
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  // rawBody：JSON parser 另外保留原始位元組（req.rawBody），LINE webhook 的簽章是對原始內容算的。
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false, rawBody: true });
   app.useBodyParser('json', { limit: '100kb' });
   app.useWebSocketAdapter(new SocketIoAdapter(app));
   const logger = new Logger('Bootstrap');
