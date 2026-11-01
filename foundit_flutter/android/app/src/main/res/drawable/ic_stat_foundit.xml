@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 狀態列通知圖示：Android 只取透明度，所以用單色的品牌括號與驚嘆號。 -->
+<!-- 狀態列通知圖示：Android 只取透明度，所以用單色的 foundit i。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
-    android:viewportWidth="32" android:viewportHeight="32">
-    <path android:pathData="M12,4H4V12M20,28H28V20"
-        android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3.2" android:strokeLineCap="round" android:strokeLineJoin="round" />
-    <path android:pathData="M13.5,5.5H18.5L17.8,19H14.2Z" android:fillColor="#FFFFFFFF" />
-    <path android:pathData="M18.5,24A2.5,2.5 0,1 1,13.5,24A2.5,2.5 0,1 1,18.5,24Z" android:fillColor="#FFFFFFFF" />
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M8.62,4.17A2.17,2.17 0 1,1 12.97,4.17A2.17,2.17 0 1,1 8.62,4.17Z" android:fillColor="#FFFFFFFF" />
+    <path android:pathData="M13.7,8.17H13.7A1.68,1.68 0 0,1 15.38,9.85V20.32A1.68,1.68 0 0,1 13.7,22H13.7A1.68,1.68 0 0,1 12.02,20.32V9.85A1.68,1.68 0 0,1 13.7,8.17Z" android:fillColor="#FFFFFFFF" />
 </vector>
