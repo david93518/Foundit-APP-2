@@ -31,7 +31,7 @@ export const WELCOME = [
     '歡迎使用 FOUND !T 找得到 👋\n\n' +
       '東西不見了？點下面的「東西不見了」，寫下特徵就能發佈尋物。\n' +
       '撿到東西？點「我撿到東西了」，不用登入就能通知失主。\n' +
-      '手上有我們發的貼紙？貼在常帶的東西上，被撿到時你會收到通知。',
+      '手上有我們發的空白貼紙？用相機掃它、登入，它就是你的；貼在常帶的東西上，被撿到時你會收到通知。',
   ),
 ];
 export const HELP = [text('請用下面的選單：\n「東西不見了」發佈尋物，「我撿到東西了」通知失主。\n撿到的東西上有 FOUND !T 的 6 碼尋物碼，也可以直接傳給我。')];
@@ -40,13 +40,13 @@ export const notFound = (code: string): LineMessage[] => [
   text(`找不到尋物碼 ${code}。請再對一次東西上的 6 碼（英文和數字，沒有 0、O、1、I），或請物主到「我的貼紙」確認。`),
 ];
 
-// 尋物碼：每人一組 6 碼，沒有 0、O、1、I（與網站 campus_private.finder_code 同一組字元）。
-const CODE = /^[A-HJ-NP-Z2-9]{6}$/;
+// 尋物碼：每人一組 6 碼，空白貼紙也是 6 碼；早期的一物一貼紙是 8 碼。沒有 0、O、1、I（與網站 campus_private.finder_code 同一組字元）。
+const CODE = /^[A-HJ-NP-Z2-9]{6}(?:[A-HJ-NP-Z2-9]{2})?$/;
 
 /** 從使用者輸入或貼上的內容找尋物碼（可以是碼本身，或 /q/碼 的網址）；找不到回傳空字串。 */
 export function stickerCodeIn(raw: unknown): string {
   const value = String(raw ?? '').trim();
-  const link = value.match(/(?:^|[/#])qr?\/([A-Za-z0-9]{6})(?:$|[?#/\s])/);
+  const link = value.match(/(?:^|[/#])qr?\/([A-Za-z0-9]{6,8})(?:$|[?#/\s])/);
   const code = (link ? link[1] : value).toUpperCase();
   return CODE.test(code) ? code : '';
 }
@@ -99,6 +99,32 @@ export function foundFlex({ url, code = '' }: { url: string; code?: string }): L
   };
 }
 
+/** 還沒有人認領的空白貼紙：拿到貼紙的人點進去登入就能認領；撿到東西的人請交招領站（沒有物主可以通知）。 */
+export function unclaimedFlex({ url, code }: { url: string; code: string }): LineMessage {
+  return {
+    type: 'flex',
+    altText: `貼紙 ${code} 還沒有主人`,
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'md',
+        contents: [
+          { type: 'text', text: `貼紙 ${code} 還沒有主人`, weight: 'bold', size: 'lg', wrap: true },
+          { type: 'text', text: '這是你拿到的空白貼紙嗎？點下面的按鈕登入，它就是你的了，有人撿到貼著它的東西時你會收到通知。', wrap: true, size: 'sm', color: '#555555' },
+          { type: 'text', text: '如果是撿到的東西，貼紙還沒有人認領，沒辦法通知物主，請交給附近的招領站。', wrap: true, size: 'sm', color: '#555555' },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [{ type: 'button', style: 'primary', action: { type: 'uri', label: '認領這張貼紙', uri: url } }],
+      },
+    },
+  };
+}
+
 /**
  * 處理一次 webhook 呼叫裡的所有事件。一個事件失敗只記錄、跳過，
  * 不會讓整批事件都失敗。
@@ -133,6 +159,8 @@ async function handleEvent(event: LineEvent, deps: BotDeps): Promise<void> {
 
 async function sendFoundLink(event: LineEvent, replyToken: string, deps: BotDeps, code: string): Promise<void> {
   if (event.source?.type !== 'user' || !event.source.userId) return deps.reply(replyToken, GROUP_ONLY);
-  if (code && (await deps.lookup(code)) === 'unknown') return deps.reply(replyToken, notFound(code));
-  return deps.reply(replyToken, [foundFlex({ url: finderUrl(deps.finderBase, code), code })]);
+  const state = code ? await deps.lookup(code) : 'bound';
+  if (state === 'unknown') return deps.reply(replyToken, notFound(code));
+  const url = finderUrl(deps.finderBase, code);
+  return deps.reply(replyToken, [state === 'unbound' ? unclaimedFlex({ url, code }) : foundFlex({ url, code })]);
 }

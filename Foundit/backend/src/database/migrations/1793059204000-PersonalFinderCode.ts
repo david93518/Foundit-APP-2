@@ -7,6 +7,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * 尋物碼存在 campus.stickers（personal = true、沒有批次、建立時就綁定），所以查詢、留言、
  * 失主回覆都走原本的 sticker_lookup／sticker_notify／sticker_thread_* 函式。
  * 失主目前沒有寄信服務，因此留言時另外寫一筆站內通知（public.notifications），網站與 App 的鈴鐺都看得到。
+ *
+ * 空白貼紙（管理員先印好、誰拿到誰掃描認領）也改成 6 碼，認領時物品名稱可以不填：
+ * 不填就和尋物碼一樣只代表這個人，通知寫「有人撿到你的東西」。
  */
 export class PersonalFinderCode1793059204000 implements MigrationInterface {
   name = 'PersonalFinderCode1793059204000';
@@ -82,6 +85,10 @@ export class PersonalFinderCode1793059204000 implements MigrationInterface {
 
     await q.query(NOTIFY_WITH_INBOX);
     await q.query(MY_STICKERS_WITH_FINDER_CODE);
+    // 之後印的空白貼紙也是 6 碼，撿到的人在 LINE 或網站輸入的都是同一種碼。已經建立的 8 碼照常可用。
+    await q.query(`CREATE OR REPLACE FUNCTION campus_private.sticker_code() RETURNS text
+      LANGUAGE sql VOLATILE SET search_path = '' AS $$ SELECT campus_private.finder_code() $$`);
+    await q.query(BIND_NAME_OPTIONAL);
 
     await q.query(`REVOKE ALL ON FUNCTION campus_private.finder_code(), campus_private.issue_finder_code(uuid),
       campus.my_finder_code(), campus.rotate_finder_code() FROM PUBLIC`);
@@ -93,6 +100,8 @@ export class PersonalFinderCode1793059204000 implements MigrationInterface {
   }
 
   public async down(q: QueryRunner): Promise<void> {
+    await q.query(BIND_ORIGINAL);
+    await q.query(STICKER_CODE_ORIGINAL);
     await q.query(MY_STICKERS_ORIGINAL);
     await q.query(NOTIFY_ORIGINAL);
     await q.query(`DROP FUNCTION IF EXISTS campus.rotate_finder_code()`);
@@ -109,8 +118,15 @@ export class PersonalFinderCode1793059204000 implements MigrationInterface {
         ALTER TABLE campus.stickers ALTER COLUMN batch_id SET NOT NULL;
       END IF;
     END $$`);
-    await q.query(`ALTER TABLE campus.stickers DROP CONSTRAINT IF EXISTS stickers_code_check`);
-    await q.query(`ALTER TABLE campus.stickers ADD CONSTRAINT stickers_code_check CHECK (code ~ '^[A-HJ-NP-Z2-9]{8}$')`);
+    // 還沒有人認領的 6 碼空白貼紙一起移除；已經被認領的不刪（那是別人的貼紙），這時保留 6 或 8 碼的規則。
+    await q.query(`DELETE FROM campus.stickers WHERE char_length(code) = 6 AND status <> 'bound'
+      AND NOT EXISTS (SELECT 1 FROM campus.sticker_threads t WHERE t.code = campus.stickers.code)`);
+    await q.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM campus.stickers WHERE char_length(code) = 6) THEN
+        ALTER TABLE campus.stickers DROP CONSTRAINT IF EXISTS stickers_code_check;
+        ALTER TABLE campus.stickers ADD CONSTRAINT stickers_code_check CHECK (code ~ '^[A-HJ-NP-Z2-9]{8}$');
+      END IF;
+    END $$`);
   }
 }
 
@@ -255,4 +271,76 @@ BEGIN
     );
   END IF;
   RETURN jsonb_build_object('thread_id', tid, 'token', tok);
+END $$`;
+
+/** 與原本相同，另外：物品名稱可以不填（0 到 40 字），30 張的上限不算尋物碼。 */
+const BIND_NAME_OPTIONAL = `CREATE OR REPLACE FUNCTION campus.sticker_bind(p_code text, p_item_name text) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  me uuid := campus_auth.uid();
+  c  text := campus_private.sticker_norm(p_code);
+  nm text := btrim(coalesce(p_item_name, ''));
+  s  campus.stickers;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('campus-write',0));
+  IF me IS NULL OR NOT campus_private.is_member() THEN
+    RAISE EXCEPTION 'sign in required' USING ERRCODE = '28000';
+  END IF;
+  IF char_length(nm) > 40 THEN
+    RAISE EXCEPTION 'item name must be 1 to 40 characters' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO s FROM campus.stickers WHERE code = c FOR UPDATE;
+  IF NOT FOUND OR s.status = 'disabled' THEN
+    RAISE EXCEPTION 'sticker not found' USING ERRCODE = 'P0002';
+  END IF;
+  IF s.personal OR (s.status = 'bound' AND s.owner_id IS DISTINCT FROM me) THEN
+    RAISE EXCEPTION 'sticker already bound' USING ERRCODE = '23505';
+  END IF;
+  IF s.status = 'unbound' AND (SELECT count(*) FROM campus.stickers WHERE owner_id = me AND NOT personal) >= 30 THEN
+    RAISE EXCEPTION 'too many stickers' USING ERRCODE = '53400';
+  END IF;
+  UPDATE campus.stickers SET status = 'bound', owner_id = me, item_name = nm, bound_at = coalesce(bound_at, now()) WHERE code = c;
+  RETURN jsonb_build_object('code', c, 'item_name', nm);
+END $$`;
+
+const BIND_ORIGINAL = `CREATE OR REPLACE FUNCTION campus.sticker_bind(p_code text, p_item_name text) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  me uuid := campus_auth.uid();
+  c  text := campus_private.sticker_norm(p_code);
+  nm text := btrim(coalesce(p_item_name, ''));
+  s  campus.stickers;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('campus-write',0));
+  IF me IS NULL OR NOT campus_private.is_member() THEN
+    RAISE EXCEPTION 'sign in required' USING ERRCODE = '28000';
+  END IF;
+  IF char_length(nm) < 1 OR char_length(nm) > 40 THEN
+    RAISE EXCEPTION 'item name must be 1 to 40 characters' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO s FROM campus.stickers WHERE code = c FOR UPDATE;
+  IF NOT FOUND OR s.status = 'disabled' THEN
+    RAISE EXCEPTION 'sticker not found' USING ERRCODE = 'P0002';
+  END IF;
+  IF s.status = 'bound' AND s.owner_id IS DISTINCT FROM me THEN
+    RAISE EXCEPTION 'sticker already bound' USING ERRCODE = '23505';
+  END IF;
+  IF s.status = 'unbound' AND (SELECT count(*) FROM campus.stickers WHERE owner_id = me) >= 30 THEN
+    RAISE EXCEPTION 'too many stickers' USING ERRCODE = '53400';
+  END IF;
+  UPDATE campus.stickers SET status = 'bound', owner_id = me, item_name = nm, bound_at = coalesce(bound_at, now()) WHERE code = c;
+  RETURN jsonb_build_object('code', c, 'item_name', nm);
+END $$`;
+
+const STICKER_CODE_ORIGINAL = `CREATE OR REPLACE FUNCTION campus_private.sticker_code() RETURNS text
+LANGUAGE plpgsql VOLATILE SET search_path = '' AS $$
+DECLARE
+  alphabet constant text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  raw  text := replace(gen_random_uuid()::text, '-', '');
+  code text := '';
+BEGIN
+  FOR i IN 0..7 LOOP
+    code := code || substr(alphabet, (get_byte(decode(substr(raw, i * 2 + 1, 2), 'hex'), 0) % 32) + 1, 1);
+  END LOOP;
+  RETURN code;
 END $$`;

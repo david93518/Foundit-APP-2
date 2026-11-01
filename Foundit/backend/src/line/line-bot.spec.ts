@@ -45,10 +45,13 @@ describe('stickerCodeIn', () => {
     expect(stickerCodeIn('https://api.foundit.tw/qr/K7M2XQ')).toBe('K7M2XQ');
     expect(stickerCodeIn('https://api.foundit.tw/q/K7M2XQ?x=1')).toBe('K7M2XQ');
     expect(stickerCodeIn('https://app.foundit.tw/q/K7M2XQ')).toBe('K7M2XQ');
+    expect(stickerCodeIn('k7m2xq9a')).toBe('K7M2XQ9A');
+    expect(stickerCodeIn('https://app.foundit.tw/q/K7M2XQ9A')).toBe('K7M2XQ9A');
   });
 
   it('rejects everything else', () => {
-    expect(stickerCodeIn('K7M2XQ9A')).toBe('');
+    expect(stickerCodeIn('K7M2XQ9')).toBe('');
+    expect(stickerCodeIn('K7M2XQ9AB')).toBe('');
     expect(stickerCodeIn('我撿到東西')).toBe('');
     expect(stickerCodeIn('K7M2X0')).toBe('');
     expect(stickerCodeIn('')).toBe('');
@@ -126,6 +129,16 @@ describe('handleEvents', () => {
   it('says so when the code does not exist or was replaced', async () => {
     const { sent } = await run([text('K7M2XQ')], 'unknown');
     expect(sent).toEqual([{ replyToken: 'r2', messages: notFound('K7M2XQ') }]);
+  });
+
+  it('offers an unclaimed blank sticker to whoever holds it, and tells a finder to use a lost-and-found desk', async () => {
+    const { sent, looked } = await run([text('K7M2XQ')], 'unbound');
+    expect(looked).toEqual(['K7M2XQ']);
+    expect(uri(sent)).toBe(`${BASE}/q/K7M2XQ?src=line`);
+    const body = JSON.stringify(sent[0].messages[0]);
+    expect(body).toMatch(/K7M2XQ 還沒有主人/);
+    expect(body).toMatch(/認領這張貼紙/);
+    expect(body).toMatch(/招領站/);
   });
 
   it('points other text to the menu and ignores other postbacks and events', async () => {
