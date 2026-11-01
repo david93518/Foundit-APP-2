@@ -10,6 +10,7 @@ import { User } from '../common/entities/user.entity';
 import { Item, ItemStatus } from '../common/entities/item.entity';
 import { ChatsGateway } from '../chats/chats.gateway';
 import { isUuid } from '../common/ids';
+import { isAdminUser } from '../common/admin-access';
 import { AdminListQueryDto, CreateReportDto, ResolveReportDto } from './dto/moderation.dto';
 
 function paging(query: AdminListQueryDto): { page: number; pageSize: number } {
@@ -86,6 +87,21 @@ export class ModerationService {
     return this.reports.find({ order: { createdAt: 'DESC' }, take: 100 });
   }
 
+  /** 每筆檢舉指的是什麼（物品標題、使用者名稱），管理頁不必一筆一筆打開。 */
+  async reportTargets(rows: Report[]): Promise<Record<string, string>> {
+    const ids = (type: string) => [...new Set(rows.filter((r) => r.targetType === type && isUuid(r.targetId)).map((r) => r.targetId))];
+    const labels: Record<string, string> = {};
+    const itemIds = ids('item');
+    const userIds = ids('user');
+    if (itemIds.length) {
+      for (const item of await this.items.find({ where: { id: In(itemIds) }, select: ['id', 'title'] })) labels[item.id] = item.title;
+    }
+    if (userIds.length) {
+      for (const user of await this.users.find({ where: { id: In(userIds) }, select: ['id', 'name', 'email'] })) labels[user.id] = user.name || user.email || '';
+    }
+    return labels;
+  }
+
   async resolveReport(admin: User, reportId: string, dto: ResolveReportDto): Promise<Report> {
     const report = await this.reports.findOne({ where: { id: reportId } });
     if (!report) throw new NotFoundException('檢舉不存在');
@@ -112,7 +128,7 @@ export class ModerationService {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('使用者不存在');
     // 管理員之間不能互相停權：一組被盜的管理員帳號不該能把其他管理員全部踢掉。
-    if (user.role === 'admin') throw new ForbiddenException('不能停用其他管理員，請直接在資料庫處理');
+    if (await isAdminUser(this.users.manager?.connection, user)) throw new ForbiddenException('不能停用其他管理員，請直接在資料庫處理');
     user.status = 'suspended';
     user.tokenVersion += 1;
     user.fcmToken = null;

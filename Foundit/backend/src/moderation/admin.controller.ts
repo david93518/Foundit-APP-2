@@ -110,6 +110,7 @@ export class AdminController {
   @Get('reports')
   async reports() {
     const data = await this.moderation.listReports();
+    const labels = await this.moderation.reportTargets(data);
     return {
       success: true,
       data: data.map((row) => ({
@@ -117,6 +118,7 @@ export class AdminController {
         reporter_id: row.reporterId,
         target_type: row.targetType,
         target_id: row.targetId,
+        target_label: labels[row.targetId] ?? '',
         reason: row.reason,
         status: row.status,
         resolution: row.resolution,
