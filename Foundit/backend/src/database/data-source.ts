@@ -12,6 +12,9 @@ import { PointEvent } from '../common/entities/point-event.entity';
 import { Report } from '../common/entities/report.entity';
 import { Block } from '../common/entities/block.entity';
 import { AdminAction } from '../common/entities/admin-action.entity';
+import { QrBatch } from '../common/entities/qr-batch.entity';
+import { LineLink } from '../common/entities/line-link.entity';
+import { QrFinderNotice } from '../common/entities/qr-finder-notice.entity';
 
 if (existsSync('.env')) {
   for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
@@ -24,7 +27,7 @@ if (existsSync('.env')) {
   }
 }
 
-const entities = [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction];
+const entities = [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction, QrBatch, LineLink, QrFinderNotice];
 const migrationDir = __dirname.replace(/\\/g, '/');
 
 export const AppDataSource = new DataSource({
