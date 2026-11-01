@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/services/auth_token_store.dart';
 
 /// 後端錯誤格式為 `{success:false, statusCode, message}`，message 可能是字串或字串陣列。
 /// 取出可直接顯示給使用者的訊息；不是伺服器回應（例如斷線）時回傳 null。
@@ -26,20 +27,26 @@ String? apiErrorMessage(Object? error) {
 /// - 5xx / 網路錯誤統一拋出，由 caller 顯示 SnackBar
 class ApiClient {
   ApiClient(this._prefs)
-      : _dio = Dio(
-          BaseOptions(
-            baseUrl: AppConstants.baseUrl,
-            connectTimeout: const Duration(seconds: 20),
-            receiveTimeout: const Duration(seconds: 20),
-            sendTimeout: const Duration(seconds: 20),
-            headers: {'Accept': 'application/json'},
-            responseType: ResponseType.json,
-          ),
-        ) {
+    : _dio = Dio(
+        BaseOptions(
+          baseUrl: AppConstants.baseUrl,
+          connectTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 20),
+          sendTimeout: const Duration(seconds: 20),
+          headers: {'Accept': 'application/json'},
+          responseType: ResponseType.json,
+          followRedirects: false,
+        ),
+      ) {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
-          final token = _prefs.getString(AppConstants.prefAuthToken);
+          final token = AuthTokenStore.read(_prefs);
+          if (options.uri.origin != Uri.parse(AppConstants.baseUrl).origin) {
+            options.headers.remove('Authorization');
+            return handler.reject(DioException(requestOptions: options,
+              message: 'API 請求來源不正確'));
+          }
           if (token != null && token.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $token';
           }
@@ -49,7 +56,8 @@ class ApiClient {
           if (e.response?.statusCode == 401 &&
               e.requestOptions.headers.containsKey('Authorization') &&
               !e.requestOptions.path.startsWith('/auth/') &&
-              e.requestOptions.path != '/users/me/delete-google') {
+              e.requestOptions.path != '/users/me/delete-google' &&
+              e.requestOptions.path != '/users/me/delete-invited') {
             await _handleUnauthorized();
           }
           return handler.next(e);
@@ -67,7 +75,7 @@ class ApiClient {
   static Stream<void> get onUnauthorized => _unauthorized.stream;
 
   Future<void> _handleUnauthorized() async {
-    await _prefs.remove(AppConstants.prefAuthToken);
+    await AuthTokenStore.clear(_prefs);
     await _prefs.setBool(AppConstants.prefIsLoggedIn, false);
     if (!_unauthorized.isClosed) {
       _unauthorized.add(null);
@@ -79,9 +87,11 @@ class ApiClient {
   Future<Response<T>> get<T>(String path, {Map<String, dynamic>? query}) =>
       _dio.get<T>(path, queryParameters: query);
 
-  Future<Response<T>> post<T>(String path,
-          {Object? data, Map<String, dynamic>? query}) =>
-      _dio.post<T>(path, data: data, queryParameters: query);
+  Future<Response<T>> post<T>(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? query,
+  }) => _dio.post<T>(path, data: data, queryParameters: query);
 
   Future<Response<T>> patch<T>(String path, {Object? data}) =>
       _dio.patch<T>(path, data: data);

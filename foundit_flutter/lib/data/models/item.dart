@@ -55,6 +55,41 @@ class Item {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  bool get hasMapPosition => validPosition(latitude, longitude);
+  static bool validPosition(double? latitude, double? longitude) =>
+      latitude != null &&
+      longitude != null &&
+      latitude.isFinite &&
+      longitude.isFinite &&
+      latitude.abs() <= 90 &&
+      longitude.abs() <= 180 &&
+      (latitude != 0 || longitude != 0);
+
+  Item withLocation(double latitude, double longitude, String name) => Item(
+    id: id,
+    type: type,
+    userId: userId,
+    userName: userName,
+    userAvatar: userAvatar,
+    userVerified: userVerified,
+    title: title,
+    category: category,
+    description: description,
+    color: color,
+    images: images,
+    latitude: latitude,
+    longitude: longitude,
+    locationName: name,
+    lostAt: lostAt,
+    reward: reward,
+    hasReward: hasReward,
+    storageLocation: storageLocation,
+    handedToPolice: handedToPolice,
+    status: status,
+    createdAt: createdAt,
+    updatedAt: DateTime.now(),
+  );
+
   const Item({
     required this.id,
     required this.type,
@@ -96,24 +131,41 @@ class Item {
       id: json['id']?.toString() ?? '',
       type: ItemType.fromCode(json['type']?.toString()),
       userId: json['user_id']?.toString() ?? json['userId']?.toString() ?? '',
-      userName: json['user_name']?.toString() ?? json['userName']?.toString() ?? '',
-      userAvatar: json['user_avatar']?.toString() ?? json['userAvatar']?.toString() ?? '',
-      userVerified: json['user_verified'] as bool? ??
+      userName:
+          json['user_name']?.toString() ?? json['userName']?.toString() ?? '',
+      userAvatar:
+          json['user_avatar']?.toString() ??
+          json['userAvatar']?.toString() ??
+          '',
+      userVerified:
+          json['user_verified'] as bool? ??
           json['userVerified'] as bool? ??
           false,
       title: json['title']?.toString() ?? '',
       category: json['category']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       color: json['color']?.toString() ?? '',
-      images: (json['images'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+      images:
+          (json['images'] as List?)?.map((e) => e.toString()).toList() ??
+          const [],
       latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
       longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
-      locationName: json['location_name']?.toString() ?? json['locationName']?.toString() ?? '',
+      locationName:
+          json['location_name']?.toString() ??
+          json['locationName']?.toString() ??
+          '',
       lostAt: _ts(json['lost_at'] ?? json['lostAt']),
       reward: (json['reward'] as num?)?.toInt() ?? 0,
-      hasReward: json['has_reward'] as bool? ?? json['hasReward'] as bool? ?? false,
-      storageLocation: json['storage_location']?.toString() ?? json['storageLocation']?.toString() ?? '',
-      handedToPolice: json['handed_to_police'] as bool? ?? json['handedToPolice'] as bool? ?? false,
+      hasReward:
+          json['has_reward'] as bool? ?? json['hasReward'] as bool? ?? false,
+      storageLocation:
+          json['storage_location']?.toString() ??
+          json['storageLocation']?.toString() ??
+          '',
+      handedToPolice:
+          json['handed_to_police'] as bool? ??
+          json['handedToPolice'] as bool? ??
+          false,
       status: ItemStatus.fromCode(json['status']?.toString()),
       createdAt: _ts(json['created_at'] ?? json['createdAt']),
       updatedAt: _ts(json['updated_at'] ?? json['updatedAt']),
@@ -127,21 +179,27 @@ class Item {
   }
 
   Map<String, dynamic> toCreateJson() => {
-        'type': type.code,
-        'title': _clip(title, 100),
-        'category': _clip(category, 50),
-        'description': _clip(description, 2000),
-        'color': _clip(color, 30),
-        'images': images,
-        if (!(latitude == 0 && longitude == 0)) 'latitude': latitude,
-        if (!(latitude == 0 && longitude == 0)) 'longitude': longitude,
-        'locationName': _clip(locationName, 200),
-        'lostAt': lostAt.millisecondsSinceEpoch,
-        'reward': reward,
-        'hasReward': hasReward,
-        'storageLocation': _clip(storageLocation, 200),
-        'handedToPolice': handedToPolice,
-        'termsAccepted': true,
-        'termsVersion': '2026-10-04',
-      };
+    'type': type.code,
+    'title': _clip(title, 100),
+    'category': _clip(category, 50),
+    'description': _clip(description, 2000),
+    'color': _clip(color, 30),
+    'images': images,
+    if (!(latitude == 0 && longitude == 0)) 'latitude': latitude,
+    if (!(latitude == 0 && longitude == 0)) 'longitude': longitude,
+    'locationName': _clip(locationName, 200),
+    'lostAt': lostAt.millisecondsSinceEpoch,
+    'reward': reward,
+    'hasReward': hasReward,
+    'storageLocation': _clip(storageLocation, 200),
+    'handedToPolice': handedToPolice,
+    'termsAccepted': true,
+    'termsVersion': '2026-10-04',
+  };
+
+  /// Editing cannot change the owner, post type, status or creation time.
+  Map<String, dynamic> toUpdateJson() => Map.from(toCreateJson())
+    ..remove('type')
+    ..remove('termsAccepted')
+    ..remove('termsVersion');
 }

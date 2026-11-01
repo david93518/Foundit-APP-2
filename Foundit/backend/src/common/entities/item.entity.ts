@@ -42,6 +42,9 @@ export class Item {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
+  @Column({ name: 'campus_code', length: 20, default: '' })
+  campusCode: string;
+
   @Column({ length: 100 })
   title: string;
 

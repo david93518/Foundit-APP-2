@@ -58,7 +58,7 @@ describe('ChatsService with a scanned tag', () => {
       }),
     };
     const chatRepo = {
-      manager: { transaction: (work: (m: typeof manager) => unknown) => work(manager) },
+      manager: { query: jest.fn().mockResolvedValue([]), transaction: (work: (m: typeof manager) => unknown) => work(manager) },
       findOne: jest.fn().mockResolvedValue({ id: 'chat-1', qrItemId: tag.id, qrItem: tag, participants: [finder, owner] }),
     } as unknown as Repository<Chat>;
     const msgRepo = { find: jest.fn().mockResolvedValue([]) } as unknown as Repository<Message>;

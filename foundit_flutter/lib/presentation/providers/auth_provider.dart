@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/api/api_client.dart';
 import '../../data/models/user.dart';
 import '../../data/repositories/auth_repository.dart';
 import 'core_providers.dart';
@@ -116,6 +117,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  void acceptSession(AuthResult result) {
+    if (!mounted || !result.success || result.user == null) return;
+    state = state.copyWith(
+      ready: true,
+      loading: false,
+      user: result.user,
+      clearError: true,
+    );
+  }
+
   /// 局部更新；不傳的欄位後端不會動。
   /// 回傳是否成功。
   Future<bool> updateProfile({
@@ -135,7 +146,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = state.copyWith(loading: false, user: user);
       return user != null;
     } catch (e) {
-      state = state.copyWith(loading: false, error: e.toString());
+      state = state.copyWith(loading: false, error: apiErrorMessage(e) ?? '暫時無法儲存，請稍後再試');
       return false;
     }
   }

@@ -1,0 +1,18 @@
+{
+  "name": "foundit-api-proxy",
+  "main": "api-proxy.mjs",
+  "compatibility_date": "2026-10-27",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "RENDER_ORIGIN": "https://foundit-api-0p3h.onrender.com"
+  },
+  "routes": [
+    {
+      "zone_name": "foundit.tw",
+      "pattern": "api.foundit.tw/*"
+    }
+  ]
+}

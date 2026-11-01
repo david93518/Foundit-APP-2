@@ -7,7 +7,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# 不執行相依套件的安裝腳本：sharp 用預先編好的二進位檔，不需要；也擋掉惡意 postinstall 與遙測回報。
+RUN npm ci --ignore-scripts
 
 COPY nest-cli.json tsconfig.json tsconfig.build.json ./
 COPY src ./src

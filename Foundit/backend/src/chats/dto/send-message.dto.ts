@@ -2,12 +2,13 @@ import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { MessageType } from '../../common/entities/message.entity';
+import { CleanText } from '../../common/text-safety';
 
 const CLIENT_TYPES = [MessageType.TEXT, MessageType.IMAGE, MessageType.LOCATION];
 
 export class SendMessageDto {
   @ApiProperty({ example: '您好，這是我的鑰匙嗎？' })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @CleanText(true)
   @IsString()
   @MinLength(1)
   @MaxLength(2000)

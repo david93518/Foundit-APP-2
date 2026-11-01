@@ -103,11 +103,11 @@ class _AiMatchScreenState extends ConsumerState<AiMatchScreen>
           _photoUrl = remoteImageUrl;
         }
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _analyzing = false;
-        _errorMessage = '配對失敗：$e';
+        _errorMessage = '配對失敗，請稍後再試';
       });
     }
   }

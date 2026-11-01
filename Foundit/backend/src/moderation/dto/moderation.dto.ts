@@ -3,6 +3,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CleanText } from '../../common/text-safety';
 
 export class CreateReportDto {
   @ApiProperty({ enum: ['item', 'user', 'message'] })
@@ -16,6 +17,7 @@ export class CreateReportDto {
   targetId: string;
 
   @ApiProperty()
+  @CleanText(true)
   @IsString()
   @MinLength(2)
   @MaxLength(1000)
@@ -28,6 +30,7 @@ export class ResolveReportDto {
   action: 'hide' | 'dismiss' | 'suspend';
 
   @ApiProperty()
+  @CleanText(true)
   @IsString()
   @MinLength(2)
   @MaxLength(1000)
@@ -44,6 +47,7 @@ export class BlockUserDto {
 
 export class SuspendUserDto {
   @ApiProperty()
+  @CleanText(true)
   @IsString()
   @MinLength(2)
   @MaxLength(1000)
@@ -63,7 +67,7 @@ export class AdminListQueryDto {
   @ApiPropertyOptional({ description: '使用者：active／suspended／deleted；物品：active／resolved／closed' })
   @IsOptional()
   @IsString()
-  @MaxLength(20)
+  @IsIn(['active', 'suspended', 'deleted', 'resolved', 'closed', 'ACTIVE', 'SUSPENDED', 'DELETED', 'RESOLVED', 'CLOSED'])
   status?: string;
 
   @ApiPropertyOptional({ enum: ['true', 'false'], description: '物品專用：true 只看已隱藏、false 只看未隱藏' })

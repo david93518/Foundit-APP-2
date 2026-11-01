@@ -55,7 +55,10 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         centerTitle: false,
         iconTheme: const IconThemeData(color: AppColors.textPrimary, size: 24),
-        titleTextStyle: AppTypography.textTheme.headlineSmall,
+        titleTextStyle: AppTypography.textTheme.headlineSmall?.copyWith(
+          fontFamily: 'NotoSansTC',
+          color: AppColors.textPrimary,
+        ),
         systemOverlayStyle: SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
           statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
@@ -84,7 +87,9 @@ class AppTheme {
           elevation: 0,
           backgroundColor: AppColors.primary,
           foregroundColor: AppColors.onPrimary,
-          textStyle: AppTypography.textTheme.labelLarge,
+          textStyle: AppTypography.textTheme.labelLarge?.copyWith(
+            fontFamily: 'NotoSansTC',
+          ),
           minimumSize: const Size.fromHeight(52),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.allMd),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
@@ -96,20 +101,26 @@ class AppTheme {
           side: const BorderSide(color: AppColors.divider, width: 1.2),
           minimumSize: const Size.fromHeight(52),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.allMd),
-          textStyle: AppTypography.textTheme.labelLarge,
+          textStyle: AppTypography.textTheme.labelLarge?.copyWith(
+            fontFamily: 'NotoSansTC',
+          ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: AppColors.primary,
-          textStyle: AppTypography.textTheme.labelLarge,
+          textStyle: AppTypography.textTheme.labelLarge?.copyWith(
+            fontFamily: 'NotoSansTC',
+          ),
           minimumSize: const Size(48, 48),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 52),
-          textStyle: AppTypography.textTheme.labelLarge,
+          textStyle: AppTypography.textTheme.labelLarge?.copyWith(
+            fontFamily: 'NotoSansTC',
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.allMd),
         ),

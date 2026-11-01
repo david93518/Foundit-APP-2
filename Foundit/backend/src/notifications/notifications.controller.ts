@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -23,7 +23,7 @@ export class NotificationsController {
     @Query('offset') offset?: string,
   ) {
     const take = Math.min(Math.max(parseInt(limit ?? '50', 10) || 50, 1), 100);
-    const skip = Math.max(parseInt(offset ?? '0', 10) || 0, 0);
+    const skip = Math.min(Math.max(parseInt(offset ?? '0', 10) || 0, 0), 5000);
     const data = await this.notifService.findAllByUser(user.id, take, skip);
     return { success: true, data: data.map(toMobileNotification) };
   }
@@ -37,7 +37,7 @@ export class NotificationsController {
 
   @Patch(':id/read')
   @ApiOperation({ summary: '標記單一通知已讀' })
-  async markRead(@Param('id') id: string, @CurrentUser() user: User) {
+  async markRead(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: User) {
     await this.notifService.markRead(id, user.id);
     return { success: true };
   }

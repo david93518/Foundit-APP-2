@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ModerationService } from './moderation.service';
 import {
@@ -30,7 +30,8 @@ function toAdminUser(u: User): Record<string, unknown> {
 
 function toAdminItem(item: Item): Record<string, unknown> {
   return {
-    ...toMobileItem(item),
+    // 管理端需要知道刊登者是誰。
+    ...toMobileItem(item, item.userId),
     hidden_at: item.hiddenAt ? new Date(item.hiddenAt).getTime() : null,
     owner_email: item.user?.email ?? '',
     owner_status: item.user?.status ?? '',
@@ -81,7 +82,7 @@ export class AdminController {
   @ApiOperation({ summary: '下架物品' })
   async hideItem(
     @CurrentUser() admin: User,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ItemActionDto,
   ) {
     const item = await this.moderation.hideItem(admin, id, dto.reason);
@@ -92,7 +93,7 @@ export class AdminController {
   @ApiOperation({ summary: '恢復物品' })
   async restoreItem(
     @CurrentUser() admin: User,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ItemActionDto,
   ) {
     const item = await this.moderation.restoreItem(admin, id, dto.reason);
@@ -128,7 +129,7 @@ export class AdminController {
   @Post('reports/:id/resolve')
   async resolve(
     @CurrentUser() admin: User,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ResolveReportDto,
   ) {
     const report = await this.moderation.resolveReport(admin, id, dto);
@@ -138,7 +139,7 @@ export class AdminController {
   @Post('users/:id/suspend')
   async suspend(
     @CurrentUser() admin: User,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: SuspendUserDto,
   ) {
     await this.moderation.suspend(admin, id, dto.reason);
@@ -148,7 +149,7 @@ export class AdminController {
   @Post('users/:id/restore')
   async restore(
     @CurrentUser() admin: User,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: SuspendUserDto,
   ) {
     await this.moderation.restore(admin, id, dto.reason);

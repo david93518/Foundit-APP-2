@@ -1,3 +1,4 @@
+import '../../core/services/push_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,6 +23,11 @@ final sharedPreferencesProvider = Provider<SharedPreferences>(
 final apiClientProvider = Provider<ApiClient>((ref) {
   final prefs = ref.watch(sharedPreferencesProvider);
   return ApiClient(prefs);
+});
+
+/// 推播（FCM）。整個 App 共用一份，啟動時由 FounditApp 初始化。
+final pushNotificationsProvider = Provider<PushNotifications>((ref) {
+  return PushNotifications(ref.watch(apiClientProvider));
 });
 
 /// 是否使用 Mock；在 UI 開發階段讀 `AppConstants.useMock`，也可在測試時 override

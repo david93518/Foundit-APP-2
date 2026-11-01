@@ -29,7 +29,7 @@ export class AiService {
       sourceItem = await this.itemsService.findOne(params.itemId);
       keywords = this.extractKeywords(sourceItem.title, sourceItem.description, sourceItem.category);
     } else if (params.keyword) {
-      keywords = params.keyword.split(/[\s,，、]+/).filter(Boolean);
+      keywords = params.keyword.split(/[\s,，、]+/).filter(Boolean).slice(0, 10);
     }
 
     const candidates = await this.itemsService.findForMatch(

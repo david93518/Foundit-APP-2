@@ -8,6 +8,7 @@ import { Notification } from '../common/entities/notification.entity';
 import { QrItem } from '../common/entities/qr-item.entity';
 import { UserPoints } from '../common/entities/user-points.entity';
 import { PointEvent } from '../common/entities/point-event.entity';
+import { QrBatch } from '../common/entities/qr-batch.entity';
 
 /** Build real PostgreSQL queries without connecting to or mutating a database. */
 class MetadataOnlyDataSource extends DataSource {
@@ -25,7 +26,7 @@ describe('ItemsService area filter', () => {
   beforeAll(async () => {
     source = new MetadataOnlyDataSource({
       type: 'postgres',
-      entities: [Item, User, Chat, Message, Notification, QrItem, UserPoints, PointEvent],
+      entities: [Item, User, Chat, Message, Notification, QrItem, QrBatch, UserPoints, PointEvent],
     });
     await source.loadMetadata();
   });

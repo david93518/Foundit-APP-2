@@ -12,6 +12,11 @@ import { PointEvent } from '../common/entities/point-event.entity';
 import { Report } from '../common/entities/report.entity';
 import { Block } from '../common/entities/block.entity';
 import { AdminAction } from '../common/entities/admin-action.entity';
+import { ChatRateLimit } from '../common/entities/chat-rate-limit.entity';
+import { UploadCleanup } from '../common/entities/upload-cleanup.entity';
+import { QrBatch } from '../common/entities/qr-batch.entity';
+import { LineLink } from '../common/entities/line-link.entity';
+import { QrFinderNotice } from '../common/entities/qr-finder-notice.entity';
 
 if (existsSync('.env')) {
   for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
@@ -24,16 +29,19 @@ if (existsSync('.env')) {
   }
 }
 
-const entities = [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction];
+const entities = [User, Item, Chat, Message, Notification, QrItem, UserPoints, PointEvent, Report, Block, AdminAction, ChatRateLimit, UploadCleanup, QrBatch, LineLink, QrFinderNotice];
 const migrationDir = __dirname.replace(/\\/g, '/');
+
+// migration 需要建表、改欄位的權限；有設定 DB_MIGRATION_USER 時用它，執行中的 API 則只用權限受限的 DB_USER。
+const migrationUser = process.env.DB_MIGRATION_USER?.trim();
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_HOST ?? 'localhost',
   port: Number(process.env.DB_PORT ?? 5432),
   database: process.env.DB_NAME ?? 'foundit',
-  username: process.env.DB_USER ?? 'foundit_user',
-  password: process.env.DB_PASS ?? 'foundit_pass',
+  username: migrationUser || (process.env.DB_USER ?? 'foundit_user'),
+  password: migrationUser ? (process.env.DB_MIGRATION_PASS ?? '') : (process.env.DB_PASS ?? 'foundit_pass'),
   entities,
   migrations: [`${migrationDir}/migrations/*.js`, `${migrationDir}/migrations/*.ts`],
   synchronize: false,
