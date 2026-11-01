@@ -10,6 +10,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * 空白貼紙（管理員先印好、誰拿到誰掃描認領）也改成 6 碼，認領時物品名稱可以不填：
  * 不填就和尋物碼一樣只代表這個人，通知寫「有人撿到你的東西」。
+ *
+ * 空白貼紙解除綁定後可以被別人認領，所以舊主人的對話不再顯示貼紙現在的名字（那是新主人取的）。
  */
 export class PersonalFinderCode1793059204000 implements MigrationInterface {
   name = 'PersonalFinderCode1793059204000';
@@ -89,6 +91,7 @@ export class PersonalFinderCode1793059204000 implements MigrationInterface {
     await q.query(`CREATE OR REPLACE FUNCTION campus_private.sticker_code() RETURNS text
       LANGUAGE sql VOLATILE SET search_path = '' AS $$ SELECT campus_private.finder_code() $$`);
     await q.query(BIND_NAME_OPTIONAL);
+    await q.query(THREAD_OWNER_OWN_NAME);
 
     await q.query(`REVOKE ALL ON FUNCTION campus_private.finder_code(), campus_private.issue_finder_code(uuid),
       campus.my_finder_code(), campus.rotate_finder_code() FROM PUBLIC`);
@@ -100,6 +103,7 @@ export class PersonalFinderCode1793059204000 implements MigrationInterface {
   }
 
   public async down(q: QueryRunner): Promise<void> {
+    await q.query(THREAD_OWNER_ORIGINAL);
     await q.query(BIND_ORIGINAL);
     await q.query(STICKER_CODE_ORIGINAL);
     await q.query(MY_STICKERS_ORIGINAL);
@@ -183,7 +187,7 @@ BEGIN
   RETURN jsonb_build_object('thread_id', tid, 'token', tok);
 END $$`;
 
-/** 與原本相同，另外：清單不含尋物碼，尋物碼另外放在 finder_code。 */
+/** 與原本相同，另外：清單不含尋物碼，尋物碼另外放在 finder_code；貼紙已經換主人的對話不顯示新主人取的名字。 */
 const MY_STICKERS_WITH_FINDER_CODE = `CREATE OR REPLACE FUNCTION campus.my_stickers() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE me uuid := campus_auth.uid();
@@ -197,7 +201,7 @@ BEGIN
                           FROM campus.stickers s WHERE s.owner_id = me AND s.status = 'bound' AND NOT s.personal), '[]'::jsonb),
     'threads', coalesce((
       SELECT jsonb_agg(jsonb_build_object(
-        'id', t.id, 'code', t.code, 'item_name', s.item_name, 'personal', s.personal, 'created_at', t.created_at, 'last_at', t.last_at,
+        'id', t.id, 'code', t.code, 'item_name', CASE WHEN s.owner_id = me THEN s.item_name ELSE '' END, 'personal', s.personal, 'created_at', t.created_at, 'last_at', t.last_at,
         'last_body', (SELECT m.body FROM campus.sticker_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1),
         'unread', EXISTS (SELECT 1 FROM campus.sticker_messages m WHERE m.thread_id = t.id AND NOT m.from_owner AND m.created_at > coalesce(t.owner_read_at, 'epoch'::timestamptz))
       ) ORDER BY t.last_at DESC)
@@ -343,4 +347,43 @@ BEGIN
     code := code || substr(alphabet, (get_byte(decode(substr(raw, i * 2 + 1, 2), 'hex'), 0) % 32) + 1, 1);
   END LOOP;
   RETURN code;
+END $$`;
+
+/** 與原本相同，另外：貼紙已經換主人時，不顯示新主人取的名字。 */
+const THREAD_OWNER_OWN_NAME = `CREATE OR REPLACE FUNCTION campus.sticker_thread_owner(p_thread uuid) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE t campus.sticker_threads; s campus.stickers;
+BEGIN
+  SELECT * INTO t FROM campus.sticker_threads WHERE id = p_thread AND owner_id = campus_auth.uid();
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'thread not found' USING ERRCODE = 'P0002';
+  END IF;
+  SELECT * INTO s FROM campus.stickers WHERE code = t.code;
+  UPDATE campus.sticker_threads SET owner_read_at = now() WHERE id = t.id;
+  RETURN jsonb_build_object(
+    'item_name', CASE WHEN s.owner_id = t.owner_id THEN s.item_name ELSE '' END,
+    'contact', t.contact,
+    'created_at', t.created_at,
+    'messages', coalesce((SELECT jsonb_agg(jsonb_build_object('from_owner', m.from_owner, 'body', m.body, 'at', m.created_at) ORDER BY m.id)
+                          FROM campus.sticker_messages m WHERE m.thread_id = t.id), '[]'::jsonb)
+  );
+END $$`;
+
+const THREAD_OWNER_ORIGINAL = `CREATE OR REPLACE FUNCTION campus.sticker_thread_owner(p_thread uuid) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE t campus.sticker_threads; s campus.stickers;
+BEGIN
+  SELECT * INTO t FROM campus.sticker_threads WHERE id = p_thread AND owner_id = campus_auth.uid();
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'thread not found' USING ERRCODE = 'P0002';
+  END IF;
+  SELECT * INTO s FROM campus.stickers WHERE code = t.code;
+  UPDATE campus.sticker_threads SET owner_read_at = now() WHERE id = t.id;
+  RETURN jsonb_build_object(
+    'item_name', s.item_name,
+    'contact', t.contact,
+    'created_at', t.created_at,
+    'messages', coalesce((SELECT jsonb_agg(jsonb_build_object('from_owner', m.from_owner, 'body', m.body, 'at', m.created_at) ORDER BY m.id)
+                          FROM campus.sticker_messages m WHERE m.thread_id = t.id), '[]'::jsonb)
+  );
 END $$`;
