@@ -42,6 +42,7 @@ export class AbuseLimitInterceptor implements NestInterceptor {
     if (method === 'POST' && path.endsWith('/qr/bind')) return { name: 'qr-bind', limit: 30, windowMs: 60 * 60_000 };
     if (method === 'POST' && /\/line\/links\/[^/]+\/notify$/.test(path)) return { name: 'line-notify', limit: 30, windowMs: 60 * 60_000 };
     if (method === 'GET' && /\/line\/links\/[^/]+$/.test(path)) return { name: 'line-status', limit: 120, windowMs: 10 * 60_000 };
+    if (method === 'GET' && path.includes('/qr/status/')) return { name: 'qr-status', limit: 60, windowMs: 10 * 60_000 };
     if (method === 'GET' && path.includes('/qr/scan/')) return { name: 'qr-scan', limit: 60, windowMs: 10 * 60_000 };
     return null;
   }

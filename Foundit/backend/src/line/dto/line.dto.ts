@@ -15,7 +15,7 @@ export class CreateLineLinkDto {
 }
 
 export class FinderNoticeDto {
-  @ApiProperty({ example: 'K7M2P9QX' })
+  @ApiProperty({ example: 'K7M2P9' })
   @IsString()
   @MaxLength(200)
   code: string;

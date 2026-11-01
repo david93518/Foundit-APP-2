@@ -81,16 +81,24 @@ export class LineService {
   }
 
   /**
-   * 撿到的人留言給物主。連結用掉一次、頻率限制、留言紀錄與通知在同一個交易裡：
-   * 貼紙編號打錯或被限流都不會消耗連結次數。
+   * 撿到的人留言給物主。代碼只有 6 碼，所以連結的次數也是防猜碼的關卡：
+   * 每次嘗試（包含打錯代碼）都用掉一次，一個連結最多 3 次，一個 LINE 使用者每小時最多 10 個連結。
+   * 被頻率限制擋下的請求不會消耗次數。留言紀錄與通知只在代碼正確時才寫。
    */
   async notifyOwner(token: string, dto: FinderNoticeDto): Promise<{ name: string; usesLeft: number }> {
-    const { qrItem, owner } = await this.qr.scanByCode(dto.code);
     const message = dto.message.trim();
     if (!message) throw new BadRequestException('請寫下留言');
     const contact = dto.contact?.trim() || null;
 
-    const result = await this.dataSource.transaction(async (manager) => {
+    let found: Awaited<ReturnType<QrService['scanByCode']>> | null = null;
+    let lookupError: unknown = null;
+    try {
+      found = await this.qr.scanByCode(dto.code);
+    } catch (error) {
+      lookupError = error;
+    }
+
+    const usesLeft = await this.dataSource.transaction(async (manager) => {
       const link = await manager.findOne(LineLink, {
         where: { tokenHash: this.hashToken(token) },
         lock: { mode: 'pessimistic_write' },
@@ -108,14 +116,23 @@ export class LineService {
 
       link.usesLeft -= 1;
       await manager.save(link);
-      await manager.save(
-        manager.create(QrFinderNotice, { qrItemId: qrItem.id, lineUserHash: link.lineUserHash, message, contact }),
-      );
+      if (found) {
+        await manager.save(
+          manager.create(QrFinderNotice, { qrItemId: found.qrItem.id, lineUserHash: link.lineUserHash, message, contact }),
+        );
+      }
       return link.usesLeft;
     });
 
-    await this.tellOwner(owner.id, owner.fcmToken, qrItem.name, message, contact);
-    return { name: qrItem.name, usesLeft: result };
+    if (!found) {
+      if (lookupError instanceof NotFoundException) {
+        const left = usesLeft > 0 ? `，這個連結還能再試 ${usesLeft} 次` : '，這個連結已用完，請回 LINE 重新取得';
+        throw new NotFoundException(`${lookupError.message}${left}`);
+      }
+      throw lookupError;
+    }
+    await this.tellOwner(found.owner.id, found.owner.fcmToken, found.qrItem.name, message, contact);
+    return { name: found.qrItem.name, usesLeft };
   }
 
   private async tellOwner(

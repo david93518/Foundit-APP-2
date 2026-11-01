@@ -85,7 +85,7 @@ describe('LineService.status', () => {
 });
 
 describe('LineService.notifyOwner', () => {
-  const dto = { code: 'K7M2P9QX', message: ' 我在圖書館撿到 ', contact: ' 0912 ' };
+  const dto = { code: 'K7M2P9', message: ' 我在圖書館撿到 ', contact: ' 0912 ' };
 
   it('spends one use, records the notice and tells the owner', async () => {
     const t = setup({ pushEnabled: true });
@@ -110,12 +110,26 @@ describe('LineService.notifyOwner', () => {
     expect(JSON.stringify(t.notifications.create.mock.calls)).not.toContain('hash');
   });
 
-  it('does not spend a use when the sticker code is wrong', async () => {
+  it('spends a use on a wrong code (6 characters are guessable) and says how many are left', async () => {
     const t = setup();
     t.qr.scanByCode.mockRejectedValue(new NotFoundException('QR Code 無效或已失效'));
-    await expect(t.service.notifyOwner('tok', dto)).rejects.toBeInstanceOf(NotFoundException);
-    expect(t.dataSource.transaction).not.toHaveBeenCalled();
-    expect(t.link?.usesLeft).toBe(3);
+    await expect(t.service.notifyOwner('tok', dto)).rejects.toThrow(/還能再試 2 次/);
+    expect(t.link?.usesLeft).toBe(2);
+    expect(t.saved.some((s) => 'qrItemId' in s)).toBe(false);
+    expect(t.notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('tells the finder when the last try was a wrong code', async () => {
+    const t = setup({ link: { usesLeft: 1 } });
+    t.qr.scanByCode.mockRejectedValue(new NotFoundException('這張貼紙尚未啟用'));
+    await expect(t.service.notifyOwner('tok', dto)).rejects.toThrow(/已用完/);
+    expect(t.link?.usesLeft).toBe(0);
+  });
+
+  it('does not let a wrong code through when the link is already used up', async () => {
+    const t = setup({ link: { usesLeft: 0 } });
+    t.qr.scanByCode.mockRejectedValue(new NotFoundException('x'));
+    await expect(t.service.notifyOwner('tok', dto)).rejects.toBeInstanceOf(GoneException);
   });
 
   it('rejects unknown, expired and used links without telling the owner', async () => {

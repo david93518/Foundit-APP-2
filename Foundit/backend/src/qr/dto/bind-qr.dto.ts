@@ -2,7 +2,7 @@ import { IsString, IsOptional, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class BindQrDto {
-  @ApiProperty({ example: 'K7M2P9QX', description: '貼紙上的編號，也可以貼上整串貼紙網址' })
+  @ApiProperty({ example: 'K7M2P9', description: '貼紙上的 6 碼編號，也可以貼上掃到的整串貼紙網址' })
   @IsString()
   @MaxLength(200)
   code: string;

@@ -1,7 +1,7 @@
 import { CODE_ALPHABET, CODE_LENGTH, newStickerCode, normalizeCode } from './sticker-code';
 
 describe('sticker codes', () => {
-  it('makes 8 characters from the unambiguous alphabet', () => {
+  it('makes 6 characters from the unambiguous alphabet', () => {
     for (let i = 0; i < 200; i += 1) {
       const code = newStickerCode();
       expect(code).toHaveLength(CODE_LENGTH);
@@ -11,16 +11,16 @@ describe('sticker codes', () => {
   });
 
   it('matches the pattern the LINE webhook looks for', () => {
-    expect(newStickerCode()).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
+    expect(newStickerCode()).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
   });
 
-  it('uppercases new 8-character codes and trims input', () => {
-    expect(normalizeCode('  k7m2p9qx ')).toBe('K7M2P9QX');
+  it('uppercases new 6-character codes and trims input', () => {
+    expect(normalizeCode('  k7m2p9 ')).toBe('K7M2P9');
   });
 
   it('pulls the code out of a pasted sticker URL', () => {
-    expect(normalizeCode('https://app.foundit.tw/qr/k7m2p9qx')).toBe('K7M2P9QX');
-    expect(normalizeCode('https://app.foundit.tw/qr/K7M2P9QX?x=1')).toBe('K7M2P9QX');
+    expect(normalizeCode('https://app.foundit.tw/qr/k7m2p9')).toBe('K7M2P9');
+    expect(normalizeCode('https://app.foundit.tw/qr/K7M2P9?x=1')).toBe('K7M2P9');
   });
 
   it('keeps legacy UUID codes as they are', () => {

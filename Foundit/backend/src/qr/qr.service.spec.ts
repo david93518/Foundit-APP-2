@@ -12,8 +12,8 @@ const admin = { id: 'admin-1', status: 'active', role: 'admin' } as User;
 function item(over: Partial<QrItem> = {}): QrItem {
   return {
     id: 'qr-1',
-    code: 'K7M2P9QX',
-    qrCode: 'https://app.foundit.tw/qr/K7M2P9QX',
+    code: 'K7M2P9',
+    qrCode: 'https://app.foundit.tw/qr/K7M2P9',
     userId: null,
     user: null,
     name: '',
@@ -64,10 +64,10 @@ function setup(rows: Partial<{ found: QrItem | null; bound: number; affected: nu
 describe('QrService.bind', () => {
   it('binds an unbound sticker with a single conditional UPDATE', async () => {
     const t = setup({ affected: 1, found: item({ userId: user.id, name: '後背包' }) });
-    const bound = await t.service.bind({ code: 'k7m2p9qx', name: ' 後背包 ' }, user);
+    const bound = await t.service.bind({ code: 'k7m2p9', name: ' 後背包 ' }, user);
     expect(bound.name).toBe('後背包');
     const [where, set] = t.qrRepo.update.mock.calls[0];
-    expect(where.code).toBe('K7M2P9QX');
+    expect(where.code).toBe('K7M2P9');
     for (const key of ['userId', 'disabledAt', 'revokedAt']) expect(where[key]).toBeDefined();
     expect(set).toMatchObject({ userId: user.id, name: '後背包', description: '' });
     expect(set.boundAt).toBeInstanceOf(Date);
@@ -75,12 +75,12 @@ describe('QrService.bind', () => {
 
   it('answers 409 when the sticker already has an owner', async () => {
     const t = setup({ affected: 0, found: item({ userId: 'someone', boundAt: new Date() }) });
-    await expect(t.service.bind({ code: 'K7M2P9QX', name: 'x' }, user)).rejects.toBeInstanceOf(ConflictException);
+    await expect(t.service.bind({ code: 'K7M2P9', name: 'x' }, user)).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('answers 404 for a code that does not exist or is malformed', async () => {
     const missing = setup({ affected: 0, found: null });
-    await expect(missing.service.bind({ code: 'K7M2P9QX', name: 'x' }, user)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(missing.service.bind({ code: 'K7M2P9', name: 'x' }, user)).rejects.toBeInstanceOf(NotFoundException);
     const malformed = setup();
     await expect(malformed.service.bind({ code: '../x', name: 'x' }, user)).rejects.toBeInstanceOf(NotFoundException);
     expect(malformed.qrRepo.update).not.toHaveBeenCalled();
@@ -88,12 +88,12 @@ describe('QrService.bind', () => {
 
   it('answers 410 for a disabled sticker', async () => {
     const t = setup({ affected: 0, found: item({ disabledAt: new Date() }) });
-    await expect(t.service.bind({ code: 'K7M2P9QX', name: 'x' }, user)).rejects.toBeInstanceOf(GoneException);
+    await expect(t.service.bind({ code: 'K7M2P9', name: 'x' }, user)).rejects.toBeInstanceOf(GoneException);
   });
 
   it('stops at the per-user limit before touching the sticker', async () => {
     const t = setup({ bound: MAX_BOUND_PER_USER });
-    await expect(t.service.bind({ code: 'K7M2P9QX', name: 'x' }, user)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(t.service.bind({ code: 'K7M2P9', name: 'x' }, user)).rejects.toBeInstanceOf(ForbiddenException);
     expect(t.qrRepo.update).not.toHaveBeenCalled();
   });
 });
@@ -103,14 +103,14 @@ describe('QrService.scanByCode', () => {
 
   it('returns a bound sticker with its owner', async () => {
     const found = item({ userId: owner.id, user: owner, boundAt: new Date(), name: '後背包' });
-    const { qrItem, owner: o } = await setup({ found }).service.scanByCode('K7M2P9QX');
+    const { qrItem, owner: o } = await setup({ found }).service.scanByCode('K7M2P9');
     expect(qrItem.name).toBe('後背包');
     expect(o).toBe(owner);
   });
 
   it('refuses a sticker nobody has bound yet, with its own message', async () => {
     const t = setup({ found: item() });
-    await expect(t.service.scanByCode('K7M2P9QX')).rejects.toThrow('尚未啟用');
+    await expect(t.service.scanByCode('K7M2P9')).rejects.toThrow('尚未啟用');
   });
 
   it.each([
@@ -118,7 +118,7 @@ describe('QrService.scanByCode', () => {
     ['revoked', { revokedAt: new Date(), userId: owner.id, user: owner, boundAt: new Date() }],
     ['deleted owner', { userId: owner.id, user: { ...owner, status: 'deleted' } as User, boundAt: new Date() }],
   ])('refuses a %s sticker', async (_name, over) => {
-    await expect(setup({ found: item(over as Partial<QrItem>) }).service.scanByCode('K7M2P9QX')).rejects.toBeInstanceOf(
+    await expect(setup({ found: item(over as Partial<QrItem>) }).service.scanByCode('K7M2P9')).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
@@ -167,7 +167,7 @@ describe('QrService.disable and remove', () => {
   });
 
   it('404s when a single sticker is missing or already disabled', async () => {
-    await expect(setup({ affected: 0 }).service.disable({ code: 'K7M2P9QX' })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(setup({ affected: 0 }).service.disable({ code: 'K7M2P9' })).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('lets only the owner revoke', async () => {

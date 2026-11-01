@@ -72,6 +72,14 @@ export class QrController {
     return { success: true, message: '已撤銷' };
   }
 
+  /** App 掃到貼紙後先問狀態：沒人綁定就顯示「綁定」，已綁定就顯示「聯絡物主」。只回狀態，不回物主任何資料。 */
+  @Get('status/:code')
+  @ApiOperation({ summary: '貼紙目前的狀態（公開端點）：unbound / active / disabled / revoked / invalid' })
+  async status(@Param('code') code: string) {
+    const { state } = await this.qrService.inspect(code);
+    return { success: true, state };
+  }
+
   @Get('scan/:code')
   @ApiOperation({ summary: '掃描 QR Code（公開端點，只有已綁定的貼紙掃得到）' })
   async scan(@Param('code') code: string) {

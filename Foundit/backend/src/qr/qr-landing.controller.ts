@@ -33,7 +33,7 @@ export class QrLandingController {
       return this.html(
         '這張貼紙尚未啟用',
         '這張貼紙還沒有主人',
-        '拿到這張貼紙的人，請登入 FOUND !T，在「我的貼紙」輸入貼紙上的編號即可啟用。',
+        '拿到這張貼紙的人，請登入 FOUND !T，用掃描功能掃這張貼紙的 QR Code，就能綁定到自己的帳號。',
       );
     }
     return this.html('這個 QR 已失效', '找不到可聯絡的物品', '貼紙可能已撤銷或連結不正確。');
