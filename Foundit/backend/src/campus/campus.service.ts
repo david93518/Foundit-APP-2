@@ -32,6 +32,7 @@ const FUNCTIONS: Record<string, string[]> = {
   admin_sticker_batches: [],
   admin_sticker_codes: ['p_batch'],
   admin_disable_stickers: ['p_batch', 'p_code'],
+  admin_sticker_lookup: ['p_code'],
 };
 const PUBLIC = new Set([
   'public_counters',

@@ -12,6 +12,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * 不填就和尋物碼一樣只代表這個人，通知寫「有人撿到你的東西」。
  *
  * 空白貼紙解除綁定後可以被別人認領，所以舊主人的對話不再顯示貼紙現在的名字（那是新主人取的）。
+ *
+ * 管理員可以查一組碼：屬於誰、哪一批、收過幾則留言（admin_sticker_lookup），處理「我的貼紙被別人綁走」之類的問題。
  */
 export class PersonalFinderCode1793059204000 implements MigrationInterface {
   name = 'PersonalFinderCode1793059204000';
@@ -92,17 +94,19 @@ export class PersonalFinderCode1793059204000 implements MigrationInterface {
       LANGUAGE sql VOLATILE SET search_path = '' AS $$ SELECT campus_private.finder_code() $$`);
     await q.query(BIND_NAME_OPTIONAL);
     await q.query(THREAD_OWNER_OWN_NAME);
+    await q.query(ADMIN_STICKER_LOOKUP);
 
     await q.query(`REVOKE ALL ON FUNCTION campus_private.finder_code(), campus_private.issue_finder_code(uuid),
-      campus.my_finder_code(), campus.rotate_finder_code() FROM PUBLIC`);
+      campus.my_finder_code(), campus.rotate_finder_code(), campus.admin_sticker_lookup(text) FROM PUBLIC`);
     const role = process.env.DB_USER;
     if (role && (await q.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [role])).length) {
       const quoted = '"' + role.replace(/"/g, '""') + '"';
-      await q.query(`GRANT EXECUTE ON FUNCTION campus.my_finder_code(), campus.rotate_finder_code() TO ${quoted}`);
+      await q.query(`GRANT EXECUTE ON FUNCTION campus.my_finder_code(), campus.rotate_finder_code(), campus.admin_sticker_lookup(text) TO ${quoted}`);
     }
   }
 
   public async down(q: QueryRunner): Promise<void> {
+    await q.query(`DROP FUNCTION IF EXISTS campus.admin_sticker_lookup(text)`);
     await q.query(THREAD_OWNER_ORIGINAL);
     await q.query(BIND_ORIGINAL);
     await q.query(STICKER_CODE_ORIGINAL);
@@ -385,5 +389,33 @@ BEGIN
     'created_at', t.created_at,
     'messages', coalesce((SELECT jsonb_agg(jsonb_build_object('from_owner', m.from_owner, 'body', m.body, 'at', m.created_at) ORDER BY m.id)
                           FROM campus.sticker_messages m WHERE m.thread_id = t.id), '[]'::jsonb)
+  );
+END $$`;
+
+/** 管理員查一組碼（貼紙或尋物碼）：狀態、主人、批次、留言數。主人的信箱只有管理員看得到。 */
+const ADMIN_STICKER_LOOKUP = `CREATE FUNCTION campus.admin_sticker_lookup(p_code text) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE s campus.stickers; b campus.sticker_batches;
+BEGIN
+  IF coalesce(campus.is_admin(), false) IS NOT TRUE THEN
+    RAISE EXCEPTION 'admin only' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO s FROM campus.stickers WHERE code = campus_private.sticker_norm(p_code);
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('found', false);
+  END IF;
+  SELECT * INTO b FROM campus.sticker_batches WHERE id = s.batch_id;
+  RETURN jsonb_build_object(
+    'found', true,
+    'code', s.code,
+    'status', s.status,
+    'personal', s.personal,
+    'item_name', s.item_name,
+    'bound_at', s.bound_at,
+    'batch', coalesce(b.label, ''),
+    'place', coalesce(b.place, ''),
+    'owner_email', coalesce((SELECT u.email FROM campus_auth.users u WHERE u.id = s.owner_id), ''),
+    'threads', (SELECT count(*) FROM campus.sticker_threads t WHERE t.code = s.code),
+    'last_notice_at', (SELECT max(t.created_at) FROM campus.sticker_threads t WHERE t.code = s.code)
   );
 END $$`;
