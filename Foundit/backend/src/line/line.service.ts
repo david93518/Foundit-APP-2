@@ -53,7 +53,7 @@ export class LineService {
 
   /** 用密鑰加鹽，資料庫看不出是哪個 LINE 使用者，但同一個人永遠得到同一個值（用來限流）。 */
   private hashLineUser(lineUser: string): string {
-    return createHmac('sha256', this.config.get<string>('LINE_BOT_SECRET', '')).update(`line-user:${lineUser}`).digest('hex');
+    return createHmac('sha256', this.config.get<string>('LINE_CHANNEL_SECRET', '')).update(`line-user:${lineUser}`).digest('hex');
   }
 
   async issueLink(lineUser: string, ttlMinutes = 60): Promise<{ token: string; expiresAt: Date; uses: number }> {

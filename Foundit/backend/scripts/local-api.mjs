@@ -12,6 +12,7 @@
 // That is a limit of this runner, not of the API; try things one after another.
 
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 
@@ -24,8 +25,27 @@ const jwt = require('jsonwebtoken');
 const PORT = process.env.PORT ?? '3000';
 const DB_PORT = 54329;
 const SECRET = randomBytes(32).toString('hex');
-const BOT_SECRET = 'local-bot-secret';
+const CHANNEL_SECRET = 'local-channel-secret';
+const LINE_PORT = 3998;
 const BASE = `http://localhost:${PORT}`;
+
+// A stand-in for api.line.me: prints what the bot would send back to LINE, so the link it hands out is visible.
+const lineMock = createServer((req, res) => {
+  let data = '';
+  req.on('data', (chunk) => { data += chunk; });
+  req.on('end', () => {
+    try {
+      const { messages = [] } = JSON.parse(data || '{}');
+      for (const m of messages) {
+        const uri = m.contents?.footer?.contents?.[0]?.action?.uri;
+        console.log(`\n[LINE reply] ${uri ? `link: ${uri}` : String(m.text).replace(/\n/g, ' / ')}`);
+      }
+    } catch { /* not a reply */ }
+    res.setHeader('content-type', 'application/json');
+    res.end('{}');
+  });
+});
+await new Promise((resolve) => lineMock.listen(LINE_PORT, '127.0.0.1', resolve));
 
 const db = new PGlite({ extensions: { uuid_ossp } });
 await db.waitReady;
@@ -38,7 +58,9 @@ const app = spawn('node', ['dist/main.js'], {
     ...process.env,
     NODE_ENV: 'development', // lets TypeORM create the tables itself
     DB_HOST: '127.0.0.1', DB_PORT: String(DB_PORT), DB_NAME: 'postgres', DB_USER: 'postgres', DB_PASS: 'local',
-    JWT_SECRET: SECRET, PORT, APP_BASE_URL: BASE, LINE_BOT_SECRET: BOT_SECRET,
+    JWT_SECRET: SECRET, PORT, APP_BASE_URL: BASE,
+    LINE_CHANNEL_SECRET: CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'local-access-token',
+    LINE_FINDER_URL: 'http://localhost:8080', LINE_API_BASE: `http://127.0.0.1:${LINE_PORT}`,
   },
 });
 let log = '';
@@ -53,7 +75,7 @@ const started = new Promise((resolve, reject) => {
   app.on('exit', (code) => reject(new Error(`API exited with ${code}\n${log.slice(-2000)}`)));
 });
 
-const stop = async () => { app.kill('SIGTERM'); await server.stop().catch(() => {}); await db.close().catch(() => {}); process.exit(0); };
+const stop = async () => { app.kill('SIGTERM'); lineMock.close(); await server.stop().catch(() => {}); await db.close().catch(() => {}); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
@@ -88,8 +110,12 @@ curl ${BASE}/api/v1/qr/status/${c1}
 curl -X POST ${BASE}/api/v1/qr/bind -H "authorization: Bearer $ALICE" -H 'content-type: application/json' -d '{"code":"${c1}","name":"藍色後背包"}'
 # Bob cannot take it (409)
 curl -X POST ${BASE}/api/v1/qr/bind -H "authorization: Bearer $BOB" -H 'content-type: application/json' -d '{"code":"${c1}","name":"偷綁"}'
-# The LINE bot asks for a one-hour link (needs the shared secret)
-curl -X POST ${BASE}/api/v1/line/links -H 'x-bot-secret: ${BOT_SECRET}' -H 'content-type: application/json' -d '{"line_user":"U0123456789abcdef0123456789abcdef"}'
+# A person presses "我撿到東西了" in LINE. This is what LINE would POST, signed with the channel secret;
+# the reply the bot sends back is printed above (the "link: ..." line has the token after t=).
+BODY='{"destination":"Ubot","events":[{"type":"postback","replyToken":"rt1","source":{"type":"user","userId":"U0123456789abcdef0123456789abcdef"},"postback":{"data":"action=found"}}]}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac '${CHANNEL_SECRET}' -binary | base64)
+curl -X POST ${BASE}/api/v1/line/webhook -H "x-line-signature: $SIG" -H 'content-type: application/json' -d "$BODY"
+# (the same with the sticker code as a text message: "type":"message","message":{"type":"text","text":"${c1}"})
 # The finder leaves a message with that token, no login
 curl -X POST ${BASE}/api/v1/line/links/<TOKEN>/notify -H 'content-type: application/json' -d '{"code":"${c1}","message":"我在總圖二樓撿到","contact":"0912-345-678"}'
 # Alice sees it

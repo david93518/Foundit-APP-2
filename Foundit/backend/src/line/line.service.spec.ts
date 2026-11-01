@@ -1,8 +1,7 @@
-import { ExecutionContext, GoneException, HttpException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { GoneException, HttpException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { LineService, LINK_USES, LINKS_PER_HOUR, NOTICES_PER_HOUR } from './line.service';
-import { BotSecretGuard } from './bot-secret.guard';
 import { LineLink } from '../common/entities/line-link.entity';
 import { NotificationType } from '../common/entities/notification.entity';
 import { QrItem } from '../common/entities/qr-item.entity';
@@ -38,7 +37,7 @@ function setup(over: { link?: Partial<LineLink> | null; recentLinks?: number; re
   const qr = { scanByCode: jest.fn().mockResolvedValue({ qrItem: tag, owner }) };
   const notifications = { create: jest.fn().mockResolvedValue({}) };
   const push = { enabled: over.pushEnabled ?? false, send: jest.fn().mockResolvedValue('sent') };
-  const config = { get: (k: string, d?: string) => (k === 'LINE_BOT_SECRET' ? 'bot-secret' : d) } as unknown as ConfigService;
+  const config = { get: (k: string, d?: string) => (k === 'LINE_CHANNEL_SECRET' ? 'channel-secret' : d) } as unknown as ConfigService;
   const service = new LineService(linkRepo as never, dataSource as never, qr as never, notifications as never, push as never, config);
   return { service, linkRepo, manager, dataSource, qr, notifications, push, saved, link };
 }
@@ -159,21 +158,3 @@ describe('LineService.notifyOwner', () => {
     expect(t.notifications.create).toHaveBeenCalled();
   });
 });
-
-describe('BotSecretGuard', () => {
-  const ctx = (header?: string) =>
-    ({ switchToHttp: () => ({ getRequest: () => ({ headers: header === undefined ? {} : { 'x-bot-secret': header } }) }) }) as unknown as ExecutionContext;
-  const guard = (secret?: string) => new BotSecretGuard({ get: () => secret } as unknown as ConfigService);
-
-  it('is closed when no secret is configured', () => {
-    expect(() => guard().canActivate(ctx('anything'))).toThrow(ServiceUnavailableException);
-  });
-
-  it('accepts only the exact secret', () => {
-    expect(guard('s3cret').canActivate(ctx('s3cret'))).toBe(true);
-    expect(() => guard('s3cret').canActivate(ctx('s3creT'))).toThrow(UnauthorizedException);
-    expect(() => guard('s3cret').canActivate(ctx('short'))).toThrow(UnauthorizedException);
-    expect(() => guard('s3cret').canActivate(ctx())).toThrow(UnauthorizedException);
-  });
-});
-

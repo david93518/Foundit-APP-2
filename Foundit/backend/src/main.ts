@@ -10,7 +10,7 @@ import { SocketIoAdapter } from './websocket/socket-io.adapter';
 import { QrLandingController } from './qr/qr-landing.controller';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.useWebSocketAdapter(new SocketIoAdapter(app));
   const logger = new Logger('Bootstrap');
 
