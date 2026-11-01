@@ -1,35 +1,21 @@
-import 'dart:async';
-import 'dart:convert';
-
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/location_service.dart';
 import '../../../core/services/map_style_service.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_spacing.dart';
-import '../../../core/utils/app_snackbar.dart';
-import '../../../core/utils/haptics.dart';
+import '../../../data/models/item.dart';
+import '../../providers/core_providers.dart';
 
-/// 地圖選點 + 地址搜尋頁面
-///
-/// 使用 OpenStreetMap (flutter_map) + Nominatim 免費 geocoding。
-/// - 上方：搜尋框（forward geocoding：地址 → 座標）
-/// - 中間：地圖；點地圖任意位置即可選點
-/// - 下方：當前選擇的座標 / 地址名稱（reverse geocoding）
-/// - 右下：「使用我目前位置」浮動按鈕
-///
-/// 確認後回傳 [LocationPickResult]
 class LocationPickedResult {
   final double latitude;
   final double longitude;
   final String address;
-
   const LocationPickedResult({
     required this.latitude,
     required this.longitude,
@@ -37,492 +23,338 @@ class LocationPickedResult {
   });
 }
 
+/// The initial camera position is never silently accepted as an item location.
 class LocationPickerScreen extends ConsumerStatefulWidget {
   const LocationPickerScreen({
     super.key,
     this.initialLatitude,
     this.initialLongitude,
     this.initialQuery,
+    this.tileProvider,
   });
-
   final double? initialLatitude;
   final double? initialLongitude;
   final String? initialQuery;
-
+  final TileProvider? tileProvider;
   @override
   ConsumerState<LocationPickerScreen> createState() =>
       _LocationPickerScreenState();
 }
 
 class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
-  late final MapController _mapController;
-  late final TextEditingController _searchCtrl;
-
-  static const _defaultCenter = LatLng(
+  final _map = MapController();
+  late final _search = TextEditingController(text: widget.initialQuery ?? '');
+  static const _center = LatLng(
     AppConstants.defaultLatitude,
     AppConstants.defaultLongitude,
   );
-
-  LatLng _picked = _defaultCenter;
-  String _address = '';
+  LatLng? _picked;
+  String _label = '';
+  String? _message;
   bool _searching = false;
-  bool _reversing = false;
-
-  List<_NominatimSuggestion> _suggestions = [];
-  Timer? _debounce;
-
-  // Nominatim 公開 API（免費，需帶 User-Agent / Referer）
-  // 服務條款：https://operations.osmfoundation.org/policies/nominatim/
-  static const _nominatim = 'https://nominatim.openstreetmap.org';
-  static const _userAgent = 'foundit-app/1.0 (contact: support@foundit.com.tw)';
+  bool _locating = false;
+  int _generation = 0;
+  List<LocationPickedResult> _results = [];
 
   @override
   void initState() {
     super.initState();
-    _mapController = MapController();
-    _searchCtrl = TextEditingController(text: widget.initialQuery ?? '');
-
-    if (widget.initialLatitude != null && widget.initialLongitude != null) {
+    if (Item.validPosition(widget.initialLatitude, widget.initialLongitude)) {
       _picked = LatLng(widget.initialLatitude!, widget.initialLongitude!);
+      _label = widget.initialQuery?.trim() ?? '';
     }
-
-    // 進頁面時：若已有座標就 reverse；否則若有 query 就 forward
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (widget.initialLatitude != null && widget.initialLongitude != null) {
-        await _reverseGeocode(_picked);
-      } else if ((widget.initialQuery ?? '').trim().isNotEmpty) {
-        await _searchAddress(widget.initialQuery!.trim());
-      }
-    });
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _searchCtrl.dispose();
-    _mapController.dispose();
+    _generation++;
+    _search.dispose();
+    _map.dispose();
     super.dispose();
   }
 
-  void _onSearchChanged(String text) {
-    _debounce?.cancel();
-    final q = text.trim();
-    if (q.isEmpty) {
-      setState(() => _suggestions = []);
-      return;
-    }
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      _fetchSuggestions(q);
-    });
-  }
+  void _editQuery(String _) => setState(() {
+    _generation++;
+    _searching = false;
+    _locating = false;
+    _results = [];
+    _picked = null;
+    _label = '';
+    _message = null;
+  });
 
-  Future<void> _fetchSuggestions(String query) async {
+  Future<void> _find() async {
+    final query = _search.text.trim();
+    if (_searching || query.isEmpty) return;
+    FocusScope.of(context).unfocus();
+    final generation = ++_generation;
+    setState(() {
+      _searching = true;
+      _locating = false;
+      _message = null;
+      _results = [];
+    });
     try {
-      final dio = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 8),
-          headers: {
-            'User-Agent': _userAgent,
-            'Accept': 'application/json',
-            'Accept-Language': 'zh-TW,zh,en',
-          },
-        ),
-      );
-      final res = await dio.get<dynamic>(
-        '$_nominatim/search',
-        queryParameters: {
-          'q': query,
-          'format': 'json',
-          'limit': 8,
-          'addressdetails': 1,
-        },
-      );
-      final list = (res.data is String)
-          ? (jsonDecode(res.data as String) as List<dynamic>)
-          : (res.data as List<dynamic>);
-      if (!mounted) return;
+      final response = await ref
+          .read(apiClientProvider)
+          .get<Map<String, dynamic>>('/locations/search', query: {'q': query});
+      if (!mounted || generation != _generation) return;
+      final rows = response.data?['data'] as List? ?? [];
+      final results = <LocationPickedResult>[];
+      for (final row in rows.whereType<Map>()) {
+        final lat = (row['latitude'] as num?)?.toDouble();
+        final lng = (row['longitude'] as num?)?.toDouble();
+        if (Item.validPosition(lat, lng)) {
+          results.add(
+            LocationPickedResult(
+              latitude: lat!,
+              longitude: lng!,
+              address: row['label']?.toString() ?? query,
+            ),
+          );
+        }
+      }
       setState(() {
-        _suggestions = list
-            .whereType<Map<String, dynamic>>()
-            .map(_NominatimSuggestion.fromJson)
-            .toList();
+        _results = results;
+        if (results.isEmpty) _message = '找不到地點。可補上縣市或完整校名，也可直接在地圖點選。';
       });
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _suggestions = []);
-    }
-  }
-
-  Future<void> _searchAddress(String query) async {
-    if (_searching) return;
-    setState(() => _searching = true);
-    try {
-      await _fetchSuggestions(query);
-      if (_suggestions.isNotEmpty) {
-        _selectSuggestion(_suggestions.first);
-      } else if (mounted) {
-        AppSnackbar.error(context, '找不到「$query」');
+      if (mounted && generation == _generation) {
+        setState(() => _message = '搜尋暫時無法使用，仍可在地圖上點選位置。');
       }
     } finally {
-      if (mounted) setState(() => _searching = false);
+      if (mounted && generation == _generation) {
+        setState(() => _searching = false);
+      }
     }
   }
 
-  void _selectSuggestion(_NominatimSuggestion s) {
-    Haptics.select();
-    final p = LatLng(s.lat, s.lon);
+  void _select(LatLng point, String label, {bool move = false}) {
+    if (!Item.validPosition(point.latitude, point.longitude)) return;
+    _generation++;
     setState(() {
-      _picked = p;
-      _address = s.displayName;
-      _suggestions = [];
-      _searchCtrl.text = s.displayName;
+      _picked = point;
+      _label = label.trim();
+      _message = null;
+      _results = [];
+      _searching = false;
+      _locating = false;
     });
-    _mapController.move(p, 16);
     FocusScope.of(context).unfocus();
+    if (move) _map.move(point, 16);
   }
 
-  Future<void> _reverseGeocode(LatLng p) async {
-    setState(() => _reversing = true);
-    try {
-      final dio = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 8),
-          headers: {
-            'User-Agent': _userAgent,
-            'Accept': 'application/json',
-            'Accept-Language': 'zh-TW,zh,en',
-          },
-        ),
-      );
-      final res = await dio.get<dynamic>(
-        '$_nominatim/reverse',
-        queryParameters: {
-          'lat': p.latitude,
-          'lon': p.longitude,
-          'format': 'json',
-          'addressdetails': 1,
-          'zoom': 18,
-        },
-      );
-      final data = (res.data is String)
-          ? (jsonDecode(res.data as String) as Map<String, dynamic>)
-          : (res.data as Map<String, dynamic>);
-      final name = (data['display_name'] as String?) ?? '';
-      if (!mounted) return;
-      setState(() => _address = name);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _address = '');
-    } finally {
-      if (mounted) setState(() => _reversing = false);
-    }
-  }
-
-  Future<void> _useCurrentLocation() async {
+  Future<void> _locate() async {
+    if (_locating) return;
+    final generation = ++_generation;
+    setState(() {
+      _locating = true;
+      _searching = false;
+      _results = [];
+    });
     final result = await ref.read(locationServiceProvider).currentPosition();
-    if (!mounted) return;
-    if (!result.isOk || result.position == null) {
-      AppSnackbar.error(context, result.message);
-      return;
+    if (!mounted || generation != _generation) return;
+    setState(() => _locating = false);
+    if (result.isOk && result.position != null) {
+      _select(result.position!, _search.text, move: true);
+    } else {
+      setState(() => _message = result.message);
     }
-    final p = result.position!;
-    setState(() => _picked = p);
-    _mapController.move(p, 16);
-    await _reverseGeocode(p);
   }
 
-  void _onMapTap(TapPosition _, LatLng p) {
-    Haptics.select();
-    setState(() => _picked = p);
-    _reverseGeocode(p);
-  }
-
+  String get _selectedLabel => _label.isNotEmpty ? _label : '地圖標示位置';
   void _confirm() {
-    if (_address.trim().isEmpty && _searchCtrl.text.trim().isEmpty) {
-      AppSnackbar.error(context, '請選擇位置或輸入地點名稱');
-      return;
-    }
-    final addr = _address.trim().isNotEmpty
-        ? _address.trim()
-        : _searchCtrl.text.trim();
+    final point = _picked;
+    if (point == null || _searching || _locating) return;
     context.pop(
       LocationPickedResult(
-        latitude: _picked.latitude,
-        longitude: _picked.longitude,
-        address: addr,
+        latitude: point.latitude,
+        longitude: point.longitude,
+        address: _selectedLabel,
       ),
     );
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(),
-            _buildSearchBar(),
-            if (_suggestions.isNotEmpty) _buildSuggestions(),
-            Expanded(child: _buildMap()),
-            _buildBottomCard(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 16, 4),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-            onPressed: () => context.pop(),
-          ),
-          const Expanded(
-            child: Text(
-              '選擇地點',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      child: TextField(
-        controller: _searchCtrl,
-        textInputAction: TextInputAction.search,
-        onChanged: _onSearchChanged,
-        onSubmitted: (v) {
-          if (v.trim().isNotEmpty) _searchAddress(v.trim());
-        },
-        decoration: InputDecoration(
-          hintText: '搜尋地址、車站、地標…',
-          prefixIcon: _searching
-              ? const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: AppColors.primary,
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: AppColors.background,
+    appBar: AppBar(title: const Text('確認地圖位置')),
+    body: SafeArea(
+      top: false,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _search,
+                        maxLength: 150,
+                        textInputAction: TextInputAction.search,
+                        onChanged: _editQuery,
+                        onSubmitted: (_) => _find(),
+                        decoration: const InputDecoration(
+                          hintText: '輸入縣市、校名或地標',
+                          counterText: '',
+                        ),
+                      ),
                     ),
-                  ),
-                )
-              : const Icon(Icons.search_rounded),
-          suffixIcon: _searchCtrl.text.isEmpty
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  onPressed: () {
-                    _searchCtrl.clear();
-                    setState(() => _suggestions = []);
-                  },
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      tooltip: '搜尋地點',
+                      onPressed: _searching ? null : _find,
+                      icon: _searching
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.search),
+                    ),
+                  ],
                 ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSuggestions() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      constraints: const BoxConstraints(maxHeight: 220),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: AppRadius.allMd,
-        border: Border.all(color: AppColors.neutral200),
-      ),
-      child: ListView.separated(
-        shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: _suggestions.length,
-        separatorBuilder: (_, __) =>
-            const Divider(height: 1, color: AppColors.neutral100),
-        itemBuilder: (_, i) {
-          final s = _suggestions[i];
-          return ListTile(
-            dense: true,
-            leading: const Icon(Icons.place_outlined, size: 20),
-            title: Text(
-              s.displayName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13),
-            ),
-            onTap: () => _selectSuggestion(s),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildMap() {
-    return Stack(
-      children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: _picked,
-            initialZoom: 15,
-            minZoom: 3,
-            maxZoom: 19,
-            onTap: _onMapTap,
-          ),
-          children: [
-            founditBaseMap(),
-            MarkerLayer(
-              markers: [
-                Marker(
-                  point: _picked,
-                  width: 60,
-                  height: 60,
-                  child: const Icon(
-                    Icons.location_on,
-                    color: AppColors.primary,
-                    size: 44,
+              ),
+              if (_message != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Semantics(liveRegion: true, child: Text(_message!)),
+                ),
+              if (_results.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text('請選擇正確的地點，再確認地圖標記。'),
+                ),
+                SizedBox(
+                  height: 180,
+                  child: ListView.builder(
+                    itemCount: _results.length,
+                    itemBuilder: (_, i) {
+                      final place = _results[i];
+                      return ListTile(
+                        leading: const Icon(Icons.place_outlined),
+                        title: Text(place.address),
+                        onTap: () {
+                          _search.text = place.address;
+                          _select(
+                            LatLng(place.latitude, place.longitude),
+                            place.address,
+                            move: true,
+                          );
+                        },
+                      );
+                    },
                   ),
                 ),
               ],
-            ),
-          ],
-        ),
-        Positioned(
-          right: 16,
-          bottom: 16,
-          child: FloatingActionButton(
-            heroTag: 'use-current',
-            backgroundColor: Colors.white,
-            foregroundColor: AppColors.primary,
-            onPressed: _useCurrentLocation,
-            child: const Icon(Icons.my_location_rounded),
-          ),
-        ),
-        const Positioned(
-          left: 8,
-          bottom: 6,
-          child: Text(
-            baseMapAttribution,
-            style: TextStyle(fontSize: 9, color: AppColors.textSecondary),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBottomCard() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.place_rounded,
-                size: 18,
-                color: AppColors.primary,
-              ),
-              const SizedBox(width: 6),
-              const Text(
-                '已選位置',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textSecondary,
+              SizedBox(
+                height: (constraints.maxHeight * .6).clamp(220.0, 520.0),
+                child: Stack(
+                  children: [
+                    FlutterMap(
+                      mapController: _map,
+                      options: MapOptions(
+                        initialCenter: _picked ?? _center,
+                        initialZoom: _picked == null ? 7 : 15,
+                        minZoom: 3,
+                        maxZoom: 19,
+                        onTap: (_, point) => _select(point, _search.text),
+                      ),
+                      children: [
+                        founditBaseMap(tileProvider: widget.tileProvider),
+                        MarkerLayer(
+                          markers: [
+                            if (_picked != null)
+                              Marker(
+                                key: const ValueKey('confirmed-location-pin'),
+                                point: _picked!,
+                                width: 48,
+                                height: 48,
+                                child: const Icon(
+                                  Icons.location_on,
+                                  size: 44,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    Positioned(
+                      right: 12,
+                      bottom: 26,
+                      child: FilledButton.tonalIcon(
+                        onPressed: _locating ? null : _locate,
+                        icon: const Icon(Icons.my_location),
+                        label: Text(_locating ? '定位中…' : '我的位置'),
+                      ),
+                    ),
+                    const Positioned(
+                      left: 8,
+                      bottom: 6,
+                      child: Text(
+                        baseMapAttribution,
+                        style: TextStyle(fontSize: 9, color: Color(0xFF444444)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const Spacer(),
-              Text(
-                '${_picked.latitude.toStringAsFixed(5)}, ${_picked.longitude.toStringAsFixed(5)}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textTertiary,
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _picked == null ? '尚未選擇位置' : _selectedLabel,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _picked == null
+                          ? '搜尋後選擇地點，或點選地圖上的大概位置；不需要公開私人住址。'
+                          : '${_picked!.latitude.toStringAsFixed(5)}, ${_picked!.longitude.toStringAsFixed(5)}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () => launchUrl(
+                        Uri.parse('https://www.openstreetmap.org/copyright'),
+                      ),
+                      child: const Text(
+                        '地點搜尋 © OpenStreetMap contributors',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _picked == null || _searching || _locating
+                          ? null
+                          : _confirm,
+                      icon: const Icon(Icons.check),
+                      label: const Text('使用此位置'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          if (_reversing)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Text('解析地址中…', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-            )
-          else
-            Text(
-              _address.isEmpty ? '在地圖上點選或搜尋地點' : _address,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _confirm,
-              icon: const Icon(Icons.check_rounded),
-              label: const Text('使用此位置'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: AppRadius.allMd),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
-    );
-  }
-}
-
-class _NominatimSuggestion {
-  final double lat;
-  final double lon;
-  final String displayName;
-
-  const _NominatimSuggestion({
-    required this.lat,
-    required this.lon,
-    required this.displayName,
-  });
-
-  factory _NominatimSuggestion.fromJson(Map<String, dynamic> j) {
-    return _NominatimSuggestion(
-      lat: double.tryParse('${j['lat']}') ?? 0,
-      lon: double.tryParse('${j['lon']}') ?? 0,
-      displayName: (j['display_name'] as String?) ?? '',
-    );
-  }
+    ),
+  );
 }

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +8,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_snackbar.dart';
+import '../../../data/api/api_client.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/chat_provider.dart';
 import '../../providers/core_providers.dart';
 
 /// Accept a standalone identifier or a FOUND !T `/qr/<code>` URL.
@@ -32,10 +36,13 @@ String? parseQrCode(String raw) {
 }
 
 class QrScanScreen extends ConsumerStatefulWidget {
-  const QrScanScreen({super.key, this.cameraPreview});
+  const QrScanScreen({super.key, this.cameraPreview, this.initialCode});
 
   /// Optional non-camera surface for layout tests; production uses MobileScanner.
   final Widget? cameraPreview;
+
+  /// 從手機相機掃到貼紙網址開進 App 時帶入的代碼：直接查詢，不必再掃一次。
+  final String? initialCode;
   @override
   ConsumerState<QrScanScreen> createState() => _QrScanScreenState();
 }
@@ -46,6 +53,18 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
       _scanner ??= MobileScannerController();
   bool _handled = false;
   bool _togglingTorch = false;
+  String? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    final code = widget.initialCode;
+    if (code != null && code.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !ref.read(useMockProvider)) _lookup(code);
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -72,40 +91,91 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
     if (_handled || ref.read(useMockProvider)) return;
     final raw = capture.barcodes.firstOrNull?.rawValue;
     if (raw == null || raw.trim().isEmpty) return;
-    setState(() => _handled = true);
-    try {
-      await _controller.stop();
-      final code = parseQrCode(raw);
-      if (code == null) {
+    final code = parseQrCode(raw);
+    if (code == null) {
+      setState(() => _handled = true);
+      try {
+        await _controller.stop();
         if (mounted) {
           AppSnackbar.error(context, '無法識別這個 QR 碼，請掃描 FOUND !T 防丟牌。');
         }
-        return;
+      } finally {
+        await _resume();
       }
+      return;
+    }
+    await _lookup(code);
+  }
+
+  /// 查詢防丟牌並顯示結果；相機在結果關閉後才重新啟動。
+  Future<void> _lookup(String code) async {
+    if (_handled) return;
+    setState(() => _handled = true);
+    try {
+      // 從網址開進來時相機可能還在啟動；停不了也不影響查詢。
+      await _scanner?.stop().catchError((_) {});
       final result = await ref.read(qrRepositoryProvider).scanByCode(code);
       if (!mounted) return;
-      await showModalBottomSheet<void>(
+      final myId = ref.read(authProvider).user?.id;
+      final contact = await showModalBottomSheet<bool>(
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         builder: (sheetContext) => QrScanResultSheet(
           itemName: result.qrItem.name,
           ownerName: result.ownerName,
-          ownerPhone: result.ownerPhone,
+          isOwnTag: result.isOwnTag || (myId != null && myId == result.ownerId),
+          onContact: () => Navigator.pop(sheetContext, true),
           onContinue: () => Navigator.pop(sheetContext),
         ),
       );
-    } catch (_) {
-      if (mounted) AppSnackbar.error(context, '暫時無法查詢這張防丟牌，請確認網路後再試。');
+      if (contact == true && mounted) await _contactOwner(code);
+    } catch (error) {
+      if (!mounted) return;
+      final status = error is DioException
+          ? error.response?.statusCode ?? 0
+          : 0;
+      AppSnackbar.error(
+        context,
+        status == 404 ? '這張防丟牌已失效或已被物主移除。' : '暫時無法查詢這張防丟牌，請確認網路後再試。',
+      );
     } finally {
-      if (mounted) {
-        setState(() => _handled = false);
-        try {
-          await _controller.start();
-        } catch (_) {
-          if (mounted) AppSnackbar.error(context, '相機暫時無法開啟，請確認相機權限後重新進入。');
-        }
-      }
+      await _resume();
+    }
+  }
+
+  Future<void> _resume() async {
+    if (!mounted) return;
+    setState(() => _handled = false);
+    try {
+      await _controller.start();
+    } catch (_) {
+      if (mounted) AppSnackbar.error(context, '相機暫時無法開啟，請確認相機權限後重新進入。');
+    }
+  }
+
+  /// 開啟（或回到）和物主的對話；返回掃描頁時相機才重新啟動。
+  Future<void> _contactOwner(String code) async {
+    setState(() => _status = '正在開啟對話…');
+    try {
+      final chat = await ref
+          .read(chatRepositoryProvider)
+          .createChatForTag(qrCode: code);
+      if (chat == null) throw StateError('沒有回傳對話');
+      ref.invalidate(chatsProvider);
+      if (!mounted) return;
+      await context.push('/chat/${chat.id}', extra: chat);
+    } catch (error) {
+      if (!mounted) return;
+      final status = error is DioException
+          ? error.response?.statusCode ?? 0
+          : 0;
+      final message = status >= 400 && status < 500
+          ? apiErrorMessage(error)
+          : null;
+      AppSnackbar.error(context, message ?? '暫時無法聯絡物主，請確認網路後再試。');
+    } finally {
+      if (mounted) setState(() => _status = null);
     }
   }
 
@@ -284,7 +354,10 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
                         const SizedBox(width: 10),
                         Flexible(
                           child: Text(
-                            _handled ? '正在查詢防丟牌…' : '對準 FOUND !T QR 碼，自動掃描',
+                            _status ??
+                                (_handled
+                                    ? '正在查詢防丟牌…'
+                                    : '對準 FOUND !T QR 碼，自動掃描'),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 14,
@@ -306,19 +379,24 @@ class _QrScanScreenState extends ConsumerState<QrScanScreen> {
   }
 }
 
-/// Scrollable, camera-independent scan result, including long names and contacts.
+/// Scrollable, camera-independent scan result. 不顯示物主的電話或 email：
+/// 撿到的人透過站內訊息聯絡，物主的私人聯絡方式不外流。
 class QrScanResultSheet extends StatelessWidget {
   const QrScanResultSheet({
     super.key,
     required this.itemName,
     required this.ownerName,
-    required this.ownerPhone,
     required this.onContinue,
+    this.onContact,
+    this.isOwnTag = false,
   });
   final String itemName;
   final String ownerName;
-  final String ownerPhone;
   final VoidCallback onContinue;
+
+  /// 為 null 時不提供聯絡（例如體驗模式）。
+  final VoidCallback? onContact;
+  final bool isOwnTag;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -375,25 +453,53 @@ class QrScanResultSheet extends StatelessWidget {
                   label: '物主',
                   value: ownerName.isEmpty ? '未提供姓名' : ownerName,
                 ),
-                if (ownerPhone.isNotEmpty)
-                  _ResultField(label: '聯絡方式', value: ownerPhone),
-                const Text(
-                  '請先核對物品特徵，再與物主約定領回方式。',
-                  style: TextStyle(
+                Text(
+                  isOwnTag
+                      ? '這是你自己的防丟牌。別人掃到時，可以在這裡直接傳訊息給你。'
+                      : '請先核對物品特徵，再傳訊息和物主約定歸還方式。你的電話與 email 不會顯示給對方。',
+                  style: const TextStyle(
                     fontSize: 14,
                     color: AppColors.textSecondary,
                     height: 1.6,
                   ),
                 ),
                 const SizedBox(height: 24),
-                FilledButton(
-                  onPressed: onContinue,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(52),
-                    padding: const EdgeInsets.all(16),
+                if (onContact != null && !isOwnTag) ...[
+                  FilledButton.icon(
+                    key: const ValueKey('qr-contact-owner'),
+                    onPressed: onContact,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      padding: const EdgeInsets.all(16),
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.onPrimary,
+                    ),
+                    icon: const Icon(
+                      Icons.chat_bubble_outline_rounded,
+                      size: 20,
+                    ),
+                    label: const Text('傳訊息給物主'),
                   ),
-                  child: const Text('繼續掃描'),
-                ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: onContinue,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      padding: const EdgeInsets.all(16),
+                      foregroundColor: AppColors.textPrimary,
+                      side: const BorderSide(color: AppColors.divider),
+                    ),
+                    child: const Text('繼續掃描'),
+                  ),
+                ] else
+                  FilledButton(
+                    onPressed: onContinue,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      padding: const EdgeInsets.all(16),
+                    ),
+                    child: const Text('繼續掃描'),
+                  ),
               ],
             ),
           ),

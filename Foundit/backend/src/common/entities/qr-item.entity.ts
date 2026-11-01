@@ -5,10 +5,17 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
+  Check,
 } from 'typeorm';
 import { User } from './user.entity';
+import { QrBatch } from './qr-batch.entity';
 
+// 約束與索引由 BoundQrAndLine migration 建立；這裡宣告是為了讓開發環境的 synchronize 不會把它們拿掉。
 @Entity('qr_items')
+@Index('idx_qr_items_user', ['userId'])
+@Index('idx_qr_items_batch', ['batchId'])
+@Check('chk_qr_bound_owner', '("user_id" IS NULL) = ("bound_at" IS NULL)')
 export class QrItem {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -41,6 +48,10 @@ export class QrItem {
   /** 印製批次。舊的自行產生貼紙沒有批次。 */
   @Column({ name: 'batch_id', type: 'uuid', nullable: true })
   batchId: string | null;
+
+  @ManyToOne(() => QrBatch, { nullable: true })
+  @JoinColumn({ name: 'batch_id', foreignKeyConstraintName: 'fk_qr_item_batch' })
+  batch?: QrBatch | null;
 
   @Column({ name: 'bound_at', type: 'timestamptz', nullable: true })
   boundAt: Date | null;

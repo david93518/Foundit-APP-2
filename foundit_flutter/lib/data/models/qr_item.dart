@@ -43,6 +43,17 @@ class QrItemModel {
     );
   }
 
+  /// 編輯名稱或備註後的新版本；QR 內容不變，已列印的貼紙照常可用。
+  QrItemModel copyWith({String? name, String? description}) => QrItemModel(
+    id: id,
+    userId: userId,
+    name: name ?? this.name,
+    description: description ?? this.description,
+    qrCode: qrCode,
+    qrImageUrl: qrImageUrl,
+    createdAt: createdAt,
+  );
+
   /// 從 qrCode 內容（`<baseUrl>/qr/<uuid>`）取出末段 uuid，給 scanByCode 使用
   String get rawCode {
     final i = qrCode.lastIndexOf('/');
@@ -57,6 +68,7 @@ class QrScanResult {
   final String ownerName;
   final String ownerAvatar;
   final String ownerPhone;
+  final bool isOwnTag;
 
   const QrScanResult({
     required this.qrItem,
@@ -64,6 +76,7 @@ class QrScanResult {
     required this.ownerName,
     this.ownerAvatar = '',
     this.ownerPhone = '',
+    this.isOwnTag = false,
   });
 
   factory QrScanResult.fromJson(Map<String, dynamic> json) {
@@ -77,6 +90,7 @@ class QrScanResult {
           ownerJson?['avatarUrl']?.toString() ??
           '',
       ownerPhone: ownerJson?['phone']?.toString() ?? '',
+      isOwnTag: json['is_own_tag'] == true,
     );
   }
 }

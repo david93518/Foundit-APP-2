@@ -375,7 +375,7 @@ backend/
 |------|---------|------|
 | 模擬器 (AVD) | `http://10.0.2.2:3000/api/v1/` | AVD 內 10.0.2.2 = host 的 localhost |
 | 實體機（USB 同網路）| `http://192.168.x.x:3000/api/v1/` | 替換為電腦 LAN IP |
-| 正式環境 | `https://api.foundit.com.tw/api/v1/` | 部署後啟用 |
+| 正式環境 | `https://api.foundit.tw/api/v1/` | 部署後啟用 |
 
 `Constants.kt` 中 `USE_MOCK = false` 即使用真實後端。
 

@@ -1,9 +1,13 @@
-import { IsOptional, IsString, IsEnum, IsBoolean, IsNumber, Max, MaxLength, Min } from 'class-validator';
+import { Equals, IsOptional, IsString, IsEnum, IsBoolean, IsInt, IsNumber, Max, MaxLength, Min } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ItemType, ItemStatus } from '../../common/entities/item.entity';
 
 export class QueryItemDto {
+  @IsOptional()
+  @Equals('ncku')
+  campus?: string;
+
   @ApiPropertyOptional({ enum: ItemType })
   @IsOptional()
   @Transform(({ value }) =>
@@ -15,11 +19,13 @@ export class QueryItemDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   category?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   area?: string;
 
   @ApiPropertyOptional()
@@ -37,13 +43,17 @@ export class QueryItemDto {
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
+  @Min(0)
+  @Max(4_102_444_800_000)
   date_from?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
+  @Min(0)
+  @Max(4_102_444_800_000)
   date_to?: number;
 
   @ApiPropertyOptional()
@@ -73,14 +83,15 @@ export class QueryItemDto {
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(500)
   page?: number = 1;
 
   @ApiPropertyOptional({ default: 20 })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(1)
   @Max(50)
   page_size?: number = 20;

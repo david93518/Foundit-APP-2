@@ -24,6 +24,7 @@ import { ChatPushService } from './chat-push.service';
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         secret: readJwtSecret(config),
+        verifyOptions: { algorithms: ['HS256'] },
       }),
       inject: [ConfigService],
     }),

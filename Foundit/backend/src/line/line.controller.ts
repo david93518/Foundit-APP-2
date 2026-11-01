@@ -5,6 +5,7 @@ import type { Request } from 'express';
 import { LineService } from './line.service';
 import { LineBotService } from './line-bot.service';
 import { FinderNoticeDto } from './dto/line.dto';
+import { RateLimit } from '../common/abuse-limit.interceptor';
 
 @ApiTags('LINE')
 @Controller('line')
@@ -28,6 +29,7 @@ export class LineController {
   }
 
   @Get('links/:token')
+  @RateLimit({ name: 'line-status', limit: 120, windowMs: 10 * 60_000, by: 'ip' })
   @ApiOperation({ summary: '查連結還能不能用（公開，不需登入）' })
   async status(@Param('token') token: string) {
     const s = await this.line.status(token);
@@ -40,6 +42,7 @@ export class LineController {
   }
 
   @Post('links/:token/notify')
+  @RateLimit({ name: 'line-notify', limit: 30, windowMs: 60 * 60_000, by: 'ip' })
   @ApiOperation({ summary: '撿到的人留言，平台轉達給貼紙物主（公開，不需登入）' })
   async notify(@Param('token') token: string, @Body() dto: FinderNoticeDto) {
     const r = await this.line.notifyOwner(token, dto);

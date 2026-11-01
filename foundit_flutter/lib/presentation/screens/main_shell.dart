@@ -3,7 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../providers/auth_provider.dart';
+import '../providers/chat_provider.dart';
 import '../providers/core_providers.dart';
+import '../providers/notifications_provider.dart';
 import '../widgets/foundit_ui.dart';
 
 /// 主框架：手機為「首頁／地圖／刊登／訊息／我的」底部列，寬螢幕為左側欄。
@@ -52,7 +55,7 @@ class MainShell extends ConsumerWidget {
               const SizedBox(height: 20),
               for (final choice in [
                 (
-                  'lost',
+                  '/add/lost',
                   '我遺失了物品',
                   '提供特徵，讓大家幫忙尋找',
                   Icons.search_rounded,
@@ -60,12 +63,21 @@ class MainShell extends ConsumerWidget {
                   AppColors.onInk,
                 ),
                 (
-                  'found',
+                  '/add/found',
                   '我撿到了物品',
                   '登記拾獲資訊，讓失主找到你',
                   Icons.inventory_2_outlined,
                   AppColors.primary,
                   AppColors.onPrimary,
+                ),
+                // 物品上有防丟牌時不必刊登，掃描後直接傳訊息給物主。
+                (
+                  '/qr/scan',
+                  '掃描防丟牌',
+                  '物品上有 FOUND !T QR？直接聯絡物主',
+                  Icons.qr_code_scanner_rounded,
+                  AppColors.primary50,
+                  AppColors.primary,
                 ),
               ])
                 Padding(
@@ -73,7 +85,7 @@ class MainShell extends ConsumerWidget {
                   child: Pressable(
                     onTap: () {
                       Navigator.pop(sheetContext);
-                      context.push('/add/${choice.$1}');
+                      context.push(choice.$1);
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -141,6 +153,11 @@ class MainShell extends ConsumerWidget {
     final wide = MediaQuery.sizeOf(context).width >= 1000;
     final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final mock = ref.watch(useMockProvider);
+    final loggedIn = mock || ref.watch(authProvider).isLoggedIn;
+    final unreadChats = loggedIn
+        ? ref.watch(chatUnreadTotalProvider).valueOrNull ?? 0
+        : 0;
+    final unreadNotices = loggedIn ? ref.watch(unreadCountProvider) : 0;
     final title = destinations
         .firstWhere(
           (destination) => destination.$1 == location,
@@ -151,7 +168,7 @@ class MainShell extends ConsumerWidget {
       backgroundColor: AppColors.background,
       body: Row(
         children: [
-          if (wide) _sidebar(context),
+          if (wide) _sidebar(context, unreadChats),
           Expanded(
             child: Column(
               children: [
@@ -214,10 +231,15 @@ class MainShell extends ConsumerWidget {
                           IconButton(
                             tooltip: '通知',
                             onPressed: () => context.push('/notifications'),
-                            icon: const Icon(
-                              Icons.notifications_none_rounded,
-                              size: 23,
-                              color: AppColors.textPrimary,
+                            icon: Badge(
+                              isLabelVisible: unreadNotices > 0,
+                              smallSize: 8,
+                              backgroundColor: AppColors.primary,
+                              child: const Icon(
+                                Icons.notifications_none_rounded,
+                                size: 23,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
                           ),
                           IconButton(
@@ -261,11 +283,11 @@ class MainShell extends ConsumerWidget {
       ),
       bottomNavigationBar: wide || MediaQuery.viewInsetsOf(context).bottom > 0
           ? null
-          : _bottomBar(context),
+          : _bottomBar(context, unreadChats),
     );
   }
 
-  Widget _sidebar(BuildContext context) => Container(
+  Widget _sidebar(BuildContext context, int unreadChats) => Container(
     width: 196,
     decoration: const BoxDecoration(
       color: AppColors.surface,
@@ -329,6 +351,8 @@ class MainShell extends ConsumerWidget {
                         ),
                       ),
                     ),
+                    if (destination.$1 == '/chats' && unreadChats > 0)
+                      UnreadCountBadge(count: unreadChats),
                   ],
                 ),
               ),
@@ -338,7 +362,7 @@ class MainShell extends ConsumerWidget {
     ),
   );
 
-  Widget _bottomBar(BuildContext context) => ColoredBox(
+  Widget _bottomBar(BuildContext context, int unreadChats) => ColoredBox(
     color: AppColors.surface,
     child: SafeArea(
       top: false,
@@ -415,6 +439,7 @@ class MainShell extends ConsumerWidget {
               '訊息',
               Icons.chat_bubble_outline_rounded,
               Icons.chat_bubble_rounded,
+              badge: unreadChats,
             ),
             _mobileNav(
               context,
@@ -434,8 +459,9 @@ class MainShell extends ConsumerWidget {
     String path,
     String label,
     IconData icon,
-    IconData selectedIcon,
-  ) {
+    IconData selectedIcon, {
+    int badge = 0,
+  }) {
     final selected =
         location == path ||
         (path == '/profile' &&
@@ -445,6 +471,7 @@ class MainShell extends ConsumerWidget {
       child: Semantics(
         selected: selected,
         button: true,
+        value: badge > 0 ? '$badge 則未讀' : null,
         child: InkWell(
           onTap: () => context.go(path),
           child: Padding(
@@ -453,15 +480,28 @@ class MainShell extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AnimatedSwitcher(
-                  duration: AppMotion.of(context, AppMotion.base),
-                  switchInCurve: AppMotion.curve,
-                  child: Icon(
-                    selected ? selectedIcon : icon,
-                    key: ValueKey(selected),
-                    size: 24,
-                    color: color,
-                  ),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: AppMotion.of(context, AppMotion.base),
+                      switchInCurve: AppMotion.curve,
+                      child: Icon(
+                        selected ? selectedIcon : icon,
+                        key: ValueKey(selected),
+                        size: 24,
+                        color: color,
+                      ),
+                    ),
+                    if (badge > 0)
+                      Positioned(
+                        left: 14,
+                        top: -6,
+                        child: ExcludeSemantics(
+                          child: UnreadCountBadge(count: badge),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -475,6 +515,35 @@ class MainShell extends ConsumerWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 未讀數小圓標（陶土底）。超過 99 顯示 99+。
+class UnreadCountBadge extends StatelessWidget {
+  const UnreadCountBadge({super.key, required this.count});
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.surface, width: 1.5),
+      ),
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        style: const TextStyle(
+          fontSize: 10.5,
+          height: 1.2,
+          fontWeight: FontWeight.w800,
+          color: AppColors.onPrimary,
         ),
       ),
     );

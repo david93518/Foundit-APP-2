@@ -8,6 +8,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/theme_provider.dart';
 import '../../widgets/google_account_button.dart';
+import '../../widgets/invited_account_dialog.dart';
 
 /// Only settings backed by implemented behavior are presented as controls.
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -30,6 +31,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _deleteAccount() async {
     final phone = ref.read(authProvider).user?.phone ?? '';
+    if (phone.startsWith('invited:')) {
+      final repository = ref.read(authRepositoryProvider);
+      final deleted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => InvitedAccountDialog(
+          username: phone.substring(8),
+          onSubmit: (username, password) async {
+            final result = await repository.deleteInvitedAccount(
+              username,
+              password,
+            );
+            return result.success ? null : result.message;
+          },
+        ),
+      );
+      if (deleted == true && mounted) {
+        await ref.read(authProvider.notifier).logout();
+        if (mounted) context.go('/login');
+      }
+      return;
+    }
     if (phone.startsWith('g:') || phone.startsWith('google_')) {
       await _deleteGoogleAccount();
       return;
@@ -329,6 +352,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 ? '目前沒有搜尋紀錄'
                                 : '${recent.length} 筆搜尋紀錄',
                             onTap: recent.isEmpty ? null : _clearSearches,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 26),
+                      _Panel(
+                        children: [
+                          _SettingRow(
+                            icon: Icons.shield_outlined,
+                            title: '安全與封鎖',
+                            detail: '交還提醒・管理已封鎖聯絡',
+                            onTap: () => context.push('/safety'),
                           ),
                         ],
                       ),

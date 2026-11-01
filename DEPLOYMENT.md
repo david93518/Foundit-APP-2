@@ -67,8 +67,8 @@ npm run start:prod
 
 ```bash
 flutter build apk \
-  --dart-define=API_BASE_URL=https://api.foundit.com.tw/api/v1 \
-  --dart-define=SOCKET_HOST=https://api.foundit.com.tw \
+  --dart-define=API_BASE_URL=https://api.foundit.tw/api/v1 \
+  --dart-define=SOCKET_HOST=https://api.foundit.tw \
   --dart-define=GOOGLE_WEB_CLIENT_ID=xxx.apps.googleusercontent.com \
   --dart-define=PROD=true
 ```

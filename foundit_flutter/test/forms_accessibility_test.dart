@@ -1,4 +1,7 @@
 import 'dart:convert';
+
+import 'support/location_picker_stub.dart';
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -51,6 +54,7 @@ Future<GoRouter> _mount(
   final router = GoRouter(
     initialLocation: path,
     routes: [
+      locationPickerStub(),
       GoRoute(
         path: '/add',
         builder: (_, __) => const AddItemScreen(type: 'found'),
@@ -131,6 +135,12 @@ Future<void> _enter(WidgetTester tester, Finder finder, String value) async {
   await tester.ensureVisible(finder);
   await tester.enterText(finder, value);
   await tester.pumpAndSettle();
+  if (finder.evaluate().any(
+    (element) => element.widget.key == const ValueKey('publish-location'),
+  )) {
+    await _tap(tester, find.text('確認地圖位置（必填）'));
+    await _tap(tester, find.text('使用此位置'));
+  }
   expect(tester.takeException(), isNull);
 }
 

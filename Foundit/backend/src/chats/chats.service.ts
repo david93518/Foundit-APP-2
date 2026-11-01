@@ -1,7 +1,8 @@
 import {
-  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
+  BadRequestException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException, Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { Chat } from '../common/entities/chat.entity';
 import { Message, MessageType } from '../common/entities/message.entity';
@@ -13,6 +14,8 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { isUuid } from '../common/ids';
 import { QrService } from '../qr/qr.service';
 import { ChatPushService } from './chat-push.service';
+import { publicBaseUrl, uploadSecret } from '../common/media-url';
+import { isOwnPrivateImage } from '../upload/private-media';
 
 type ChatSubject = {
   key: { itemId: string } | { qrItemId: string };
@@ -32,6 +35,7 @@ export class ChatsService {
     @InjectRepository(Block) private readonly blockRepo: Repository<Block>,
     private readonly qrService: QrService,
     private readonly chatPush: ChatPushService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async createOrGet(dto: CreateChatDto, requester: User): Promise<Chat> {
@@ -76,6 +80,7 @@ export class ChatsService {
         return { id: again.id, created: false };
       }
     });
+    await this.chatRepo.manager.query('DELETE FROM hidden_chats WHERE user_id=$1 AND chat_id=$2', [requester.id,chatId]);
     const chat = await this.loadChat(chatId);
     if (created && subject.isQr) {
       this.background(() => this.chatPush.tagScanned(chat, requester, subject.title));
@@ -109,6 +114,7 @@ export class ChatsService {
       .leftJoinAndSelect('chat.participants', 'participant')
       .leftJoinAndSelect('chat.item', 'item')
       .leftJoinAndSelect('chat.qrItem', 'qrItem')
+      .where('NOT EXISTS (SELECT 1 FROM hidden_chats h WHERE h.chat_id=chat.id AND h.user_id=:uid AND h.hidden_at >= chat.updated_at)', { uid: userId })
       .orderBy('chat.updated_at', 'DESC')
       .getMany();
 
@@ -149,6 +155,7 @@ export class ChatsService {
       .createQueryBuilder('m')
       .innerJoin('chat_participants', 'cp', 'cp.chat_id = m.chat_id')
       .where('cp.user_id = :uid', { uid: userId })
+      .andWhere('NOT EXISTS (SELECT 1 FROM hidden_chats h JOIN chats c ON c.id=h.chat_id WHERE h.chat_id=m.chat_id AND h.user_id=:uid AND h.hidden_at>=c.updated_at)')
       .andWhere('m.sender_id != :uid', { uid: userId })
       .andWhere('m.read_at IS NULL')
       .getCount();
@@ -162,7 +169,8 @@ export class ChatsService {
   ): Promise<Message[]> {
     await this.assertParticipant(chatId, userId);
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 50);
-    const page = Math.max(options.page ?? 1, 1);
+    // 深分頁會讓資料庫掃過大量資料；更舊的訊息請用 before 游標往前翻。
+    const page = Math.min(Math.max(options.page ?? 1, 1), 200);
     const qb = this.msgRepo
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.sender', 'sender')
@@ -175,10 +183,11 @@ export class ChatsService {
       if (!isUuid(options.before)) throw new BadRequestException('歷史訊息範圍不正確');
       const pivot = await this.msgRepo.findOne({ where: { id: options.before, chatId } });
       if (!pivot) throw new BadRequestException('歷史訊息範圍不正確');
-      qb.andWhere('(m.createdAt < :before OR (m.createdAt = :before AND m.id < :beforeId))', {
-        before: pivot.createdAt,
-        beforeId: pivot.id,
-      });
+      // 時間在資料庫內比較：PostgreSQL 存到微秒，JS Date 只有毫秒，帶回來比會漏掉同一毫秒內的訊息。
+      qb.andWhere(
+        `(m.created_at, m.id) < (SELECT p.created_at, p.id FROM messages p WHERE p.id = :beforeId)`,
+        { beforeId: pivot.id },
+      );
     } else if (page > 1) {
       qb.skip((page - 1) * limit);
     }
@@ -197,6 +206,11 @@ export class ChatsService {
     if (dto.type === MessageType.SYSTEM) {
       throw new BadRequestException('不能建立系統訊息');
     }
+    // 圖片訊息只能是傳送者本人上傳到本站的圖，對方的 App 不會被導去載入第三方網址。
+    if (dto.type === MessageType.IMAGE &&
+        !isOwnPrivateImage(dto.content.trim(), sender.id, publicBaseUrl(this.config), uploadSecret(this.config))) {
+      throw new BadRequestException('聊天圖片必須使用私人圖片上傳入口');
+    }
     if (dto.client_message_id) {
       const existing = await this.msgRepo.findOne({
         where: { chatId, senderId: sender.id, clientMessageId: dto.client_message_id },
@@ -204,6 +218,17 @@ export class ChatsService {
       });
       if (existing) return existing;
     }
+
+    // PostgreSQL serializes updates for this account: REST, all sockets and all API replicas share the quota.
+    const quota: Array<{ count: number }> = await this.chatRepo.manager.query(`
+      INSERT INTO chat_rate_limits(user_id, window_start, count) VALUES ($1, clock_timestamp(), 1)
+      ON CONFLICT (user_id) DO UPDATE SET
+        count = CASE WHEN chat_rate_limits.window_start <= clock_timestamp() - interval '1 minute'
+          THEN 1 ELSE LEAST(chat_rate_limits.count + 1, 61) END,
+        window_start = CASE WHEN chat_rate_limits.window_start <= clock_timestamp() - interval '1 minute'
+          THEN clock_timestamp() ELSE chat_rate_limits.window_start END
+      RETURNING count`, [sender.id]);
+    if (quota[0].count > 60) throw new HttpException('訊息太頻繁，請稍後再試', 429);
 
     try {
       const saved = await this.msgRepo.save(this.msgRepo.create({
@@ -237,13 +262,15 @@ export class ChatsService {
     if (!isUuid(upToMessageId)) throw new BadRequestException('已讀範圍不正確');
     const pivot = await this.msgRepo.findOne({ where: { id: upToMessageId, chatId } });
     if (!pivot) throw new BadRequestException('已讀範圍不正確');
+    // 同上：pivot.createdAt 被截到毫秒後，最新那則（微秒較大）永遠不會 <= 它，未讀就一直停在 1。
     await this.msgRepo
       .createQueryBuilder()
       .update(Message)
       .set({ readAt: new Date() })
       .where(
-        'chat_id = :chatId AND sender_id != :userId AND read_at IS NULL AND created_at <= :createdAt',
-        { chatId, userId, createdAt: pivot.createdAt },
+        `chat_id = :chatId AND sender_id != :userId AND read_at IS NULL
+          AND created_at <= (SELECT p.created_at FROM messages p WHERE p.id = :pivotId)`,
+        { chatId, userId, pivotId: pivot.id },
       )
       .execute();
   }
@@ -258,6 +285,16 @@ export class ChatsService {
     if (count === 0) throw new ForbiddenException('無權限存取此聊天室');
   }
 
+  /** 聊天室的所有參與者 id（給即時事件與上線狀態用）。 */
+  async participantIds(chatId: string): Promise<string[]> {
+    if (!isUuid(chatId)) return [];
+    const rows: Array<{ user_id: string }> = await this.chatRepo.manager.query(
+      'SELECT user_id FROM chat_participants WHERE chat_id = $1',
+      [chatId],
+    );
+    return rows.map((row) => row.user_id);
+  }
+
   private async assertNotBlocked(leftId: string, rightId: string): Promise<void> {
     const blocked = await this.blockRepo.findOne({
       where: [
@@ -266,6 +303,11 @@ export class ChatsService {
       ],
     });
     if (blocked) throw new ForbiddenException('無法與這個使用者聯絡');
+  }
+
+  async detailForUser(id: string, userId: string): Promise<Chat> {
+    await this.assertParticipant(id, userId);
+    return this.loadChat(id);
   }
 
   private async loadChat(id: string): Promise<Chat> {

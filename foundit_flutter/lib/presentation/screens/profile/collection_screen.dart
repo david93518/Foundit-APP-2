@@ -17,6 +17,9 @@ final collectionProvider = FutureProvider.autoDispose.family<List<Item>, bool>((
   final repo = ref.watch(itemRepositoryProvider);
   if (saved) {
     final ids = ref.watch(savedItemsProvider);
+    final notifier = ref.read(savedItemsProvider.notifier);
+    await notifier.ready;
+    await notifier.synchronize();
     final items = await Future.wait(
       ids.map((id) async {
         try {

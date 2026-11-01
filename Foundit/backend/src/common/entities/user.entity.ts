@@ -35,6 +35,9 @@ export class User {
   @Column({ type: 'text', default: '' })
   bio: string;
 
+  @Column({ name: 'verified_email', length: 120, default: '' })
+  verifiedEmail: string;
+
   /** 進階聯絡資料 — 暫無驗證流程，僅儲存 */
   @Column({ length: 120, default: '' })
   email: string;

@@ -9,12 +9,15 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'crypto';
 import { QrItem } from '../common/entities/qr-item.entity';
 import { QrBatch } from '../common/entities/qr-batch.entity';
 import { User } from '../common/entities/user.entity';
+import { GenerateQrDto } from './dto/generate-qr.dto';
 import { BindQrDto, UpdateQrDto } from './dto/bind-qr.dto';
 import { CreateQrBatchDto } from './dto/qr-batch.dto';
 import { newStickerCode, normalizeCode } from './sticker-code';
+import { findSensitiveData } from '../common/text-safety';
 
 /** 每位使用者最多同時綁定幾張貼紙，避免有人把整批貼紙一次綁走。 */
 export const MAX_BOUND_PER_USER = 30;
@@ -41,6 +44,12 @@ export class QrService {
 
   private baseUrl(): string {
     return this.config.get<string>('APP_BASE_URL', 'http://localhost:3000').replace(/\/$/, '');
+  }
+
+  /** 撿到的人會看到物品名稱；聯絡一律走站內訊息，名稱裡不放電話或 email。 */
+  private assertSafeName(name: string): void {
+    const sensitive = findSensitiveData(name);
+    if (sensitive) throw new BadRequestException(`物品名稱不能包含${sensitive}，撿到的人會透過站內訊息聯絡你`);
   }
 
   // ---- 管理員：印製與停用 ----
@@ -130,9 +139,31 @@ export class QrService {
 
   // ---- 使用者：綁定與管理 ----
 
+  /**
+   * 舊版 App 的「自己產生防丟牌」。新流程是綁定官方印的貼紙（bind）；新版 App 上架前先保留，
+   * 已安裝舊版的使用者才不會一更新後端就不能建立防丟牌。產生的貼紙直接視為已綁定。
+   */
+  async generate(dto: GenerateQrDto, user: User): Promise<QrItem> {
+    if (this.config.get<string>('QR_SELF_GENERATE', 'true') === 'false') {
+      throw new GoneException('貼紙改由官方發放，請輸入貼紙上的編號綁定');
+    }
+    this.assertSafeName(dto.name);
+    const code = randomUUID();
+    return this.qrRepo.save(this.qrRepo.create({
+      userId: user.id,
+      name: dto.name,
+      description: dto.description ?? '',
+      code,
+      qrCode: `${this.baseUrl()}/qr/${code}`,
+      qrImageUrl: '',
+      boundAt: new Date(),
+    }));
+  }
+
   async bind(dto: BindQrDto, user: User): Promise<QrItem> {
     const code = normalizeCode(dto.code);
     if (!code) throw new NotFoundException('找不到這個貼紙編號');
+    this.assertSafeName(dto.name);
     const bound = await this.qrRepo.count({ where: { userId: user.id, revokedAt: IsNull() } });
     if (bound >= MAX_BOUND_PER_USER) {
       throw new ForbiddenException(`最多只能綁定 ${MAX_BOUND_PER_USER} 張貼紙`);
@@ -153,6 +184,7 @@ export class QrService {
     return item;
   }
 
+  /** 撤銷（刪除）的貼紙保留紀錄給舊對話用，但不再出現在物主的清單。 */
   async findAllByUser(userId: string): Promise<QrItem[]> {
     return this.qrRepo.find({
       where: { userId, revokedAt: IsNull() },
@@ -160,34 +192,47 @@ export class QrService {
     });
   }
 
+  /** 只改名稱與備註；貼紙代碼不變，已經印出來的 QR 繼續有效。 */
   async update(id: string, dto: UpdateQrDto, user: User): Promise<QrItem> {
     const qrItem = await this.owned(id, user);
-    if (dto.name !== undefined) qrItem.name = dto.name.trim();
+    if (dto.name !== undefined) {
+      this.assertSafeName(dto.name);
+      qrItem.name = dto.name.trim();
+    }
     if (dto.description !== undefined) qrItem.description = dto.description.trim();
     return this.qrRepo.save(qrItem);
   }
 
-  /** 撤銷之後這張貼紙就永久失效（物主可能已把它弄丟或轉手），不會回到未綁定。 */
+  /**
+   * 撤銷之後這張貼紙就永久失效（物主可能已把它弄丟或轉手），不會回到未綁定。
+   * 重複刪除（例如連點兩次）視為成功。
+   */
   async remove(id: string, user: User): Promise<void> {
-    const qrItem = await this.owned(id, user);
+    const qrItem = await this.qrRepo.findOne({ where: { id } });
+    if (!qrItem) throw new NotFoundException('QR 物品不存在');
+    if (qrItem.userId !== user.id) throw new ForbiddenException('無權限刪除此 QR');
+    if (qrItem.revokedAt) return;
     qrItem.revokedAt = new Date();
     await this.qrRepo.save(qrItem);
   }
 
   private async owned(id: string, user: User): Promise<QrItem> {
     const qrItem = await this.qrRepo.findOne({ where: { id } });
-    if (!qrItem) throw new NotFoundException('QR 物品不存在');
+    if (!qrItem || qrItem.revokedAt) throw new NotFoundException('QR 物品不存在');
     if (qrItem.userId !== user.id) throw new ForbiddenException('無權限修改此 QR');
-    if (qrItem.revokedAt) throw new NotFoundException('QR 物品不存在');
     return qrItem;
   }
 
   // ---- 掃描 ----
 
+  /** 只有已綁定、未停用、未撤銷、物主帳號正常的貼紙掃得到。 */
   async scanByCode(code: string): Promise<{ qrItem: QrItem; owner: User }> {
     const { state, qrItem } = await this.inspect(code);
     if (state === 'unbound') throw new NotFoundException('這張貼紙尚未啟用');
-    if (state !== 'active' || !qrItem || !qrItem.user) throw new NotFoundException('QR Code 無效或已失效');
+    // 停權的物主暫時聯絡不到（與帳號刪除不同，貼紙本身仍屬於他）。
+    if (state !== 'active' || !qrItem?.user || qrItem.user.status !== 'active') {
+      throw new NotFoundException('QR Code 無效或已失效');
+    }
     return { qrItem, owner: qrItem.user };
   }
 

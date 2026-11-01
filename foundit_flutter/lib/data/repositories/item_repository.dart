@@ -35,22 +35,22 @@ class ItemFilter {
   });
 
   Map<String, dynamic> toQuery() => {
-        if (type != null) 'type': type!.code,
-        if (category != null) 'category': category,
-        if (area != null) 'area': area,
-        // 後端 keyword 上限 100 字。
-        if (keyword != null && keyword!.trim().isNotEmpty)
-          'keyword': keyword!.trim().length > 100
-              ? keyword!.trim().substring(0, 100)
-              : keyword!.trim(),
-        if (hasReward != null) 'has_reward': hasReward,
-        if (lat != null) 'lat': lat,
-        if (lng != null) 'lng': lng,
-        if (radius != null) 'radius': radius,
-        'page': page < 1 ? 1 : page,
-        // 後端驗證 page_size 介於 1–50，超過會整個請求 400。
-        'page_size': pageSize.clamp(1, maxPageSize),
-      };
+    if (type != null) 'type': type!.code,
+    if (category != null) 'category': category,
+    if (area != null) 'area': area,
+    // 後端 keyword 上限 100 字。
+    if (keyword != null && keyword!.trim().isNotEmpty)
+      'keyword': keyword!.trim().length > 100
+          ? keyword!.trim().substring(0, 100)
+          : keyword!.trim(),
+    if (hasReward != null) 'has_reward': hasReward,
+    if (lat != null) 'lat': lat,
+    if (lng != null) 'lng': lng,
+    if (radius != null) 'radius': radius,
+    'page': page < 1 ? 1 : page,
+    // 後端驗證 page_size 介於 1–50，超過會整個請求 400。
+    'page_size': pageSize.clamp(1, maxPageSize),
+  };
 
   static const maxPageSize = 50;
 
@@ -99,25 +99,32 @@ class ItemFilter {
 
   @override
   int get hashCode => Object.hash(
-        type,
-        category,
-        area,
-        keyword,
-        hasReward,
-        lat,
-        lng,
-        radius,
-        page,
-        pageSize,
-      );
+    type,
+    category,
+    area,
+    keyword,
+    hasReward,
+    lat,
+    lng,
+    radius,
+    page,
+    pageSize,
+  );
 }
 
 abstract class ItemRepository {
   Future<List<Item>> list(ItemFilter filter);
   Future<Item?> detail(String id);
   Future<Item?> create(Item item);
+  Future<Item?> update(Item item);
   Future<bool> delete(String id);
   Future<bool> resolve(String id);
+  Future<Item?> updateLocation(
+    String id,
+    double latitude,
+    double longitude,
+    String name,
+  );
 
   /// 全平台統計（首頁榮譽帶 / 分類角標）
   Future<ItemStats> stats();
@@ -132,6 +139,56 @@ class MockItemRepository implements ItemRepository {
   static const _storageKey = 'foundit_demo_items_v1';
   final SharedPreferences? _prefs;
   late final List<Item> _local;
+
+  @override
+  Future<Item?> update(Item draft) async {
+    final index = _local.indexWhere(
+      (item) =>
+          item.id == draft.id &&
+          item.userId == 'me' &&
+          item.status == ItemStatus.active,
+    );
+    if (index < 0) return null;
+    final original = _local[index];
+    final updated = Item.fromJson({
+      ...draft.toUpdateJson(),
+      'id': original.id,
+      'userId': original.userId,
+      'type': original.type.code,
+      'status': original.status.code,
+      'userName': original.userName,
+      'userAvatar': original.userAvatar,
+      'userVerified': original.userVerified,
+      'createdAt': original.createdAt.millisecondsSinceEpoch,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+    _local[index] = updated;
+    await _persist();
+    return updated;
+  }
+
+  @override
+  Future<Item?> updateLocation(
+    String id,
+    double latitude,
+    double longitude,
+    String name,
+  ) async {
+    if (!Item.validPosition(latitude, longitude)) {
+      throw ArgumentError('Invalid map position');
+    }
+    final index = _local.indexWhere(
+      (item) =>
+          item.id == id &&
+          item.userId == 'me' &&
+          item.status == ItemStatus.active,
+    );
+    if (index < 0) return null;
+    final updated = _local[index].withLocation(latitude, longitude, name);
+    _local[index] = updated;
+    await _persist();
+    return updated;
+  }
 
   List<Item>? _readSavedItems() {
     final raw = _prefs?.getString(_storageKey);
@@ -149,16 +206,16 @@ class MockItemRepository implements ItemRepository {
   }
 
   Map<String, dynamic> _toSavedJson(Item item) => {
-        ...item.toCreateJson(),
-        'id': item.id,
-        'user_id': item.userId,
-        'user_name': item.userName,
-        'user_avatar': item.userAvatar,
-        'user_verified': item.userVerified,
-        'status': item.status.code,
-        'created_at': item.createdAt.millisecondsSinceEpoch,
-        'updated_at': item.updatedAt.millisecondsSinceEpoch,
-      };
+    ...item.toCreateJson(),
+    'id': item.id,
+    'user_id': item.userId,
+    'user_name': item.userName,
+    'user_avatar': item.userAvatar,
+    'user_verified': item.userVerified,
+    'status': item.status.code,
+    'created_at': item.createdAt.millisecondsSinceEpoch,
+    'updated_at': item.updatedAt.millisecondsSinceEpoch,
+  };
 
   Future<void> _persist() async {
     await _prefs?.setString(
@@ -174,7 +231,8 @@ class MockItemRepository implements ItemRepository {
     const toRadians = math.pi / 180;
     final latDelta = (item.latitude - latitude) * toRadians;
     final lngDelta = (item.longitude - longitude) * toRadians;
-    final a = math.pow(math.sin(latDelta / 2), 2) +
+    final a =
+        math.pow(math.sin(latDelta / 2), 2) +
         math.cos(latitude * toRadians) *
             math.cos(item.latitude * toRadians) *
             math.pow(math.sin(lngDelta / 2), 2);
@@ -268,7 +326,7 @@ class MockItemRepository implements ItemRepository {
   @override
   Future<bool> delete(String id) async {
     await Future.delayed(const Duration(milliseconds: 200));
-    final index = _local.indexWhere((i) => i.id == id);
+    final index = _local.indexWhere((i) => i.id == id && i.userId == 'me');
     if (index == -1) return false;
     _local.removeAt(index);
     await _persist();
@@ -278,7 +336,7 @@ class MockItemRepository implements ItemRepository {
   @override
   Future<bool> resolve(String id) async {
     await Future.delayed(const Duration(milliseconds: 200));
-    final index = _local.indexWhere((i) => i.id == id);
+    final index = _local.indexWhere((i) => i.id == id && i.userId == 'me');
     if (index == -1) return false;
     _local[index] = Item.fromJson({
       ..._toSavedJson(_local[index]),
@@ -318,6 +376,39 @@ class MockItemRepository implements ItemRepository {
 class RemoteItemRepository implements ItemRepository {
   RemoteItemRepository(this._api);
   final ApiClient _api;
+
+  @override
+  Future<Item?> update(Item item) async {
+    final res = await _api.patch<Map<String, dynamic>>(
+      '/items/${item.id}',
+      data: item.toUpdateJson(),
+    );
+    final data = res.data?['data'] as Map<String, dynamic>?;
+    return data == null ? null : Item.fromJson(data);
+  }
+
+  @override
+  Future<Item?> updateLocation(
+    String id,
+    double latitude,
+    double longitude,
+    String name,
+  ) async {
+    if (!Item.validPosition(latitude, longitude)) {
+      throw ArgumentError('Invalid map position');
+    }
+    final label = name.trim();
+    final result = await _api.patch<Map<String, dynamic>>(
+      '/items/$id',
+      data: {
+        'latitude': latitude,
+        'longitude': longitude,
+        'locationName': label.length > 200 ? label.substring(0, 200) : label,
+      },
+    );
+    final data = result.data?['data'] as Map<String, dynamic>?;
+    return data == null ? null : Item.fromJson(data);
+  }
 
   @override
   Future<List<Item>> list(ItemFilter filter) async {

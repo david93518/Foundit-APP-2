@@ -6,9 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dio/dio.dart';
+import 'package:foundit/data/api/api_client.dart';
+import 'package:foundit/presentation/screens/item/location_picker_screen.dart';
 import 'package:foundit/core/services/location_service.dart';
 import 'package:foundit/core/theme/app_theme.dart';
 import 'package:foundit/presentation/providers/core_providers.dart';
+import 'package:foundit/presentation/providers/items_provider.dart';
+import 'package:foundit/data/models/item.dart';
 import 'package:foundit/presentation/screens/map/map_screen.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -65,6 +70,207 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'unlocated listings are visible as a list without fabricated pins',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final now = DateTime(2026);
+      Item item(String id, {double lat = 0, double lng = 0}) => Item(
+        id: id,
+        type: ItemType.found,
+        title: id,
+        category: '其他',
+        latitude: lat,
+        longitude: lng,
+        locationName: '成大',
+        lostAt: now,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final rows = [
+        item('已定位', lat: 24.79, lng: 120.99),
+        item('小波'),
+        item('烤肉串'),
+        item('灰貓'),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sharedPreferencesProvider.overrideWithValue(prefs),
+            locationServiceProvider.overrideWithValue(
+              _Location(
+                Future.value(
+                  const LocationResult(LocationResultCode.permissionDenied),
+                ),
+              ),
+            ),
+            mapItemsProvider.overrideWith((ref, type) async => rows),
+          ],
+          child: MaterialApp(
+            home: Scaffold(body: MapScreen(tileProvider: _Tiles(bytes))),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1 件已標示 · 3 件待補位置 ›'), findsOneWidget);
+      final layer = tester.widget<MarkerLayer>(find.byType(MarkerLayer));
+      expect(layer.markers, hasLength(1));
+      await tester.tap(find.text('1 件已標示 · 3 件待補位置 ›'));
+      await tester.pumpAndSettle();
+      expect(find.text('小波'), findsOneWidget);
+      expect(find.text('烤肉串'), findsOneWidget);
+      expect(find.text('灰貓'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'typing a name never accepts the default center; search result must be selected',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final api = ApiClient(prefs);
+      var searches = 0;
+      api.dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            searches++;
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: {
+                  'data': [
+                    {
+                      'latitude': 22.998,
+                      'longitude': 120.217,
+                      'label': '國立成功大學',
+                    },
+                  ],
+                },
+              ),
+            );
+          },
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sharedPreferencesProvider.overrideWithValue(prefs),
+            apiClientProvider.overrideWithValue(api),
+          ],
+          child: MaterialApp(
+            home: LocationPickerScreen(
+              initialQuery: '成大',
+              tileProvider: _Tiles(bytes),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      FilledButton confirm() => tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '使用此位置'),
+      );
+      expect(confirm().onPressed, isNull);
+      expect(
+        tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers,
+        isEmpty,
+      );
+      await tester.enterText(find.byType(TextField), '台南市 成大');
+      await tester.pump(const Duration(seconds: 2));
+      expect(searches, 0);
+      await tester.tap(find.byTooltip('搜尋地點'));
+      await tester.pumpAndSettle();
+      expect(searches, 1);
+      expect(confirm().onPressed, isNull);
+      await tester.tap(find.text('國立成功大學'));
+      await tester.pumpAndSettle();
+      expect(confirm().onPressed, isNotNull);
+      expect(
+        tester
+            .widget<MarkerLayer>(find.byType(MarkerLayer))
+            .markers
+            .single
+            .point,
+        const LatLng(22.998, 120.217),
+      );
+      await tester.enterText(find.byType(TextField), '另一個地方');
+      await tester.pumpAndSettle();
+      expect(confirm().onPressed, isNull);
+      expect(
+        tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers,
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'location confirmation remains reachable with large text and keyboard',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      for (final size in [
+        const Size(320, 568),
+        const Size(844, 390),
+        const Size(768, 1024),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sharedPreferencesProvider.overrideWithValue(prefs),
+              locationServiceProvider.overrideWithValue(
+                _Location(
+                  Future.value(
+                    const LocationResult(
+                      LocationResultCode.ok,
+                      LatLng(22.998, 120.217),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            child: MaterialApp(
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: const TextScaler.linear(2),
+                  viewInsets: const EdgeInsets.only(bottom: 200),
+                ),
+                child: child!,
+              ),
+              home: LocationPickerScreen(
+                initialQuery: '成大',
+                tileProvider: _Tiles(bytes),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('我的位置'));
+        await tester.tap(find.text('我的位置'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('使用此位置'));
+        expect(
+          tester
+              .widget<FilledButton>(find.widgetWithText(FilledButton, '使用此位置'))
+              .onPressed,
+          isNotNull,
+        );
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: '$size at 200 percent text',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
 
   testWidgets(
     'opening map uses current position, filtering does not request it again',

@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index, Check } from 'typeorm';
 
 /**
  * LINE 官方帳號發給撿到東西的人的一次性連結。
@@ -6,6 +6,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 
  */
 @Entity('line_links')
 @Index('idx_line_links_user_created', ['lineUserHash', 'createdAt'])
+@Check('chk_line_links_uses', '"uses_left" >= 0')
 export class LineLink {
   @PrimaryGeneratedColumn('uuid')
   id: string;

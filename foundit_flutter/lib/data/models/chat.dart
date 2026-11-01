@@ -23,6 +23,9 @@ class ChatParticipant {
 class Chat {
   final String id;
   final String itemId;
+
+  /// 由掃描防丟牌開啟的對話；此時 itemId 為空，itemTitle 是防丟牌名稱。
+  final String qrItemId;
   final String itemTitle;
   final String itemImage;
   final List<ChatParticipant> participants;
@@ -35,6 +38,7 @@ class Chat {
   const Chat({
     required this.id,
     this.itemId = '',
+    this.qrItemId = '',
     this.itemTitle = '',
     this.itemImage = '',
     this.participants = const [],
@@ -59,6 +63,7 @@ class Chat {
     return Chat(
       id: json['id']?.toString() ?? '',
       itemId: json['item_id']?.toString() ?? '',
+      qrItemId: json['qr_item_id']?.toString() ?? '',
       itemTitle: json['item_title']?.toString() ?? '',
       itemImage: json['item_image']?.toString() ?? '',
       participants: (json['participants'] as List?)

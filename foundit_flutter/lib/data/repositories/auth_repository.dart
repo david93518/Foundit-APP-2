@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_constants.dart';
 import '../api/api_client.dart';
 import '../models/user.dart';
+import '../../core/services/auth_token_store.dart';
 
 /// 認證狀態結果
 class AuthResult {
@@ -33,6 +34,13 @@ abstract class AuthRepository {
   });
 
   Future<AppUser?> getMe();
+
+  Future<AuthResult> invitedLogin(String username, String password) async =>
+      const AuthResult(success: false, message: '此模式不支援受邀帳號登入');
+  Future<AuthResult> deleteInvitedAccount(
+    String username,
+    String password,
+  ) async => const AuthResult(success: false, message: '此模式沒有可刪除的受邀帳號');
 
   /// 局部更新個人資料；不傳的欄位後端不會動。
   Future<AppUser?> updateProfile({
@@ -82,7 +90,7 @@ class MockAuthRepository extends AuthRepository {
       return const AuthResult(success: false, message: '驗證碼格式錯誤');
     }
     final user = _makeUser(phone);
-    await _prefs.setString(AppConstants.prefAuthToken, 'mock_token_xyz');
+    await AuthTokenStore.write(_prefs, 'mock_token_xyz');
     await _prefs.setString(AppConstants.prefUserId, user.id);
     await _prefs.setString(AppConstants.prefUserName, user.name);
     await _prefs.setString(AppConstants.prefUserAvatar, user.avatarUrl);
@@ -115,10 +123,7 @@ class MockAuthRepository extends AuthRepository {
       isVerified: true,
       createdAt: DateTime.now(),
     );
-    await _prefs.setString(
-      AppConstants.prefAuthToken,
-      'mock_${provider}_token',
-    );
+    await AuthTokenStore.write(_prefs, 'mock_${provider}_token');
     await _prefs.setString(AppConstants.prefUserId, user.id);
     await _prefs.setString(AppConstants.prefUserName, user.name);
     await _prefs.setString(AppConstants.prefUserAvatar, user.avatarUrl);
@@ -159,7 +164,7 @@ class MockAuthRepository extends AuthRepository {
 
   @override
   Future<void> logout() async {
-    await _prefs.remove(AppConstants.prefAuthToken);
+    await AuthTokenStore.clear(_prefs);
     await _prefs.remove(AppConstants.prefUserId);
     await _prefs.remove(AppConstants.prefUserName);
     await _prefs.remove(AppConstants.prefUserAvatar);
@@ -212,15 +217,64 @@ class RemoteAuthRepository implements AuthRepository {
   final SharedPreferences _prefs;
 
   @override
+  Future<AuthResult> invitedLogin(String username, String password) async {
+    try {
+      final res = await _api.post<Map<String, dynamic>>(
+        '/auth/invited-login',
+        data: {'username': username, 'password': password},
+      );
+      final data = res.data ?? {};
+      final token = data['token']?.toString() ?? '';
+      final userJson = data['user'] as Map<String, dynamic>?;
+      if (data['success'] != true || token.isEmpty || userJson == null) {
+        return const AuthResult(success: false, message: '登入未完成，請稍後重試。');
+      }
+      final user = AppUser.fromJson(userJson);
+      await _persistSession(token, user);
+      return AuthResult(success: true, token: token, user: user);
+    } catch (_) {
+      return const AuthResult(
+        success: false,
+        message: '無法登入，請確認帳號、密碼、邀請期限及網路連線。',
+      );
+    }
+  }
+
+  @override
+  Future<AuthResult> deleteInvitedAccount(
+    String username,
+    String password,
+  ) async {
+    try {
+      final res = await _api.post<Map<String, dynamic>>(
+        '/users/me/delete-invited',
+        data: {'username': username, 'password': password},
+      );
+      return AuthResult(
+        success: res.data?['success'] == true,
+        message: res.data?['message']?.toString() ?? '',
+      );
+    } catch (_) {
+      return const AuthResult(success: false, message: '帳號尚未刪除，請確認密碼及網路連線。');
+    }
+  }
+
+  @override
   Future<AuthResult> deleteGoogleAccount(String idToken) async {
     try {
       final res = await _api.post<Map<String, dynamic>>(
-        '/users/me/delete-google', data: {'idToken': idToken},
+        '/users/me/delete-google',
+        data: {'idToken': idToken},
       );
-      return AuthResult(success: res.data?['success'] == true,
-        message: res.data?['message']?.toString() ?? '');
+      return AuthResult(
+        success: res.data?['success'] == true,
+        message: res.data?['message']?.toString() ?? '',
+      );
     } catch (_) {
-      return const AuthResult(success: false, message: '刪除未完成，請確認使用原本的 Google 帳號後重試。');
+      return const AuthResult(
+        success: false,
+        message: '刪除未完成，請確認使用原本的 Google 帳號後重試。',
+      );
     }
   }
 
@@ -237,7 +291,7 @@ class RemoteAuthRepository implements AuthRepository {
         message: d['message']?.toString() ?? '',
       );
     } catch (e) {
-      return AuthResult(success: false, message: e.toString());
+      return AuthResult(success: false, message: _friendly(e, '驗證碼暫時無法寄出，請稍後再試'));
     }
   }
 
@@ -265,7 +319,7 @@ class RemoteAuthRepository implements AuthRepository {
         message: d['message']?.toString() ?? '',
       );
     } catch (e) {
-      return AuthResult(success: false, message: e.toString());
+      return AuthResult(success: false, message: _friendly(e, '登入失敗，請確認後再試'));
     }
   }
 
@@ -303,7 +357,7 @@ class RemoteAuthRepository implements AuthRepository {
         message: d['message']?.toString() ?? '',
       );
     } catch (e) {
-      return AuthResult(success: false, message: '第三方登入失敗：$e');
+      return AuthResult(success: false, message: _friendly(e, '第三方登入失敗，請稍後再試'));
     }
   }
 
@@ -354,7 +408,7 @@ class RemoteAuthRepository implements AuthRepository {
     try {
       await _api.post('/auth/logout');
     } catch (_) {}
-    await _prefs.remove(AppConstants.prefAuthToken);
+    await AuthTokenStore.clear(_prefs);
     await _prefs.remove(AppConstants.prefUserId);
     await _prefs.remove(AppConstants.prefUserName);
     await _prefs.remove(AppConstants.prefUserAvatar);
@@ -363,6 +417,11 @@ class RemoteAuthRepository implements AuthRepository {
     await _prefs.remove('user_bio');
     await _prefs.remove('user_points');
     await _prefs.remove('user_is_verified');
+    // 同一支手機換人登入時，不留下前一位的搜尋紀錄與未送出的聊天草稿。
+    await _prefs.remove(AppConstants.prefRecentSearches);
+    for (final key in _prefs.getKeys().where((key) => key.startsWith('chat_draft:')).toList()) {
+      await _prefs.remove(key);
+    }
     await _prefs.setBool(AppConstants.prefIsLoggedIn, false);
   }
 
@@ -380,7 +439,7 @@ class RemoteAuthRepository implements AuthRepository {
         message: res.data?['message']?.toString() ?? '',
       );
     } catch (e) {
-      return AuthResult(success: false, message: e.toString());
+      return AuthResult(success: false, message: _friendly(e, '帳號尚未刪除，請稍後再試'));
     }
   }
 
@@ -404,7 +463,7 @@ class RemoteAuthRepository implements AuthRepository {
         message: res.data?['message']?.toString() ?? '已送出檢舉',
       );
     } catch (e) {
-      return AuthResult(success: false, message: e.toString());
+      return AuthResult(success: false, message: _friendly(e, '檢舉尚未送出，請稍後再試'));
     }
   }
 
@@ -429,8 +488,11 @@ class RemoteAuthRepository implements AuthRepository {
     );
   }
 
+  /// 只顯示伺服器給使用者看的訊息；例外的原始內容（內部網址、堆疊）不出現在畫面上。
+  String _friendly(Object error, String fallback) => apiErrorMessage(error) ?? fallback;
+
   Future<void> _persistSession(String token, AppUser user) async {
-    await _prefs.setString(AppConstants.prefAuthToken, token);
+    await AuthTokenStore.write(_prefs, token);
     await _persistUserCache(user);
     await _prefs.setBool(AppConstants.prefIsLoggedIn, true);
   }

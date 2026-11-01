@@ -13,6 +13,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../common/entities/user.entity';
+import { RateLimit } from '../common/abuse-limit.interceptor';
 
 class MarkReadDto {
   @ApiProperty()
@@ -31,9 +32,12 @@ export class ChatsController {
   ) {}
 
   @Post()
+  @RateLimit({ name: 'chat-create', limit: 30, windowMs: 60 * 60_000, by: 'user' })
   @ApiOperation({ summary: '建立或取得聊天室' })
   async create(@Body() dto: CreateChatDto, @CurrentUser() user: User) {
     const chat = await this.chatsService.createOrGet(dto, user);
+    // 新對話會帶一則系統訊息：讓物主的未讀角標立刻更新。
+    await this.chatsGateway.pushInbox(chat.id);
     return { success: true, data: toMobileChat(chat, user.id) };
   }
 
@@ -69,7 +73,13 @@ export class ChatsController {
     return { success: true, data: rows.map(toMobileMessage) };
   }
 
+  @Get(':id')
+  async detail(@Param('id') id: string, @CurrentUser() user: User) {
+    return { success: true, data: toMobileChat(await this.chatsService.detailForUser(id, user.id), user.id) };
+  }
+
   @Post(':id/messages')
+  @RateLimit({ name: 'chat-send', limit: 60, windowMs: 60_000, by: 'user' })
   @ApiOperation({ summary: '發送訊息（REST，推薦用 WebSocket）' })
   async sendMessage(
     @Param('id') id: string,
@@ -78,11 +88,13 @@ export class ChatsController {
   ) {
     const msg = await this.chatsService.sendMessage(id, dto, user);
     const payload = toMobileMessage(msg);
-    this.chatsGateway.pushToChat(id, 'message', payload);
+    await this.chatsGateway.pushToChat(id, 'message', payload);
+    await this.chatsGateway.pushInbox(id);
     return { success: true, data: payload };
   }
 
   @Patch(':id/read')
+  @RateLimit({ name: 'chat-read', limit: 120, windowMs: 60_000, by: 'user' })
   @ApiOperation({ summary: '將已載入、且不晚於指定訊息的對方訊息標為已讀' })
   async markRead(
     @Param('id') id: string,
@@ -90,11 +102,12 @@ export class ChatsController {
     @CurrentUser() user: User,
   ) {
     await this.chatsService.markRead(id, user.id, dto.up_to_message_id);
-    this.chatsGateway.pushToChat(id, 'read', {
+    await this.chatsGateway.pushToChat(id, 'read', {
       chatId: id,
       userId: user.id,
       upToMessageId: dto.up_to_message_id,
     });
+    await this.chatsGateway.pushInbox(id, [user.id]);
     return { success: true };
   }
 }
