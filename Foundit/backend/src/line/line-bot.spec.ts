@@ -1,14 +1,13 @@
 import { createHmac } from 'crypto';
 import {
+  CodeState,
   HELP,
-  LINK_MINUTES,
   LineEvent,
-  RateLimitedError,
-  TOO_MANY,
   WELCOME,
   finderUrl,
   foundFlex,
   handleEvents,
+  notFound,
   stickerCodeIn,
   verifySignature,
 } from './line-bot';
@@ -45,10 +44,14 @@ describe('stickerCodeIn', () => {
     expect(stickerCodeIn('  K7M2XQ \n')).toBe('K7M2XQ');
     expect(stickerCodeIn('https://api.foundit.tw/qr/K7M2XQ')).toBe('K7M2XQ');
     expect(stickerCodeIn('https://api.foundit.tw/q/K7M2XQ?x=1')).toBe('K7M2XQ');
+    expect(stickerCodeIn('https://app.foundit.tw/q/K7M2XQ')).toBe('K7M2XQ');
+    expect(stickerCodeIn('k7m2xq9a')).toBe('K7M2XQ9A');
+    expect(stickerCodeIn('https://app.foundit.tw/q/K7M2XQ9A')).toBe('K7M2XQ9A');
   });
 
   it('rejects everything else', () => {
-    expect(stickerCodeIn('K7M2XQ9A')).toBe('');
+    expect(stickerCodeIn('K7M2XQ9')).toBe('');
+    expect(stickerCodeIn('K7M2XQ9AB')).toBe('');
     expect(stickerCodeIn('我撿到東西')).toBe('');
     expect(stickerCodeIn('K7M2X0')).toBe('');
     expect(stickerCodeIn('')).toBe('');
@@ -57,100 +60,109 @@ describe('stickerCodeIn', () => {
 });
 
 describe('finderUrl', () => {
-  it('opens the finder page, tagged as coming from LINE', () => {
-    expect(finderUrl(BASE, 'abc')).toBe(`${BASE}/?src=line#/line/found?t=abc`);
-    expect(finderUrl(`${BASE}/`, 'abc', 'K7M2XQ')).toBe(`${BASE}/?src=line#/line/found?t=abc&c=K7M2XQ`);
+  it('opens the web message page for a code, or the code entry page, tagged as coming from LINE', () => {
+    expect(finderUrl(BASE, 'K7M2XQ')).toBe(`${BASE}/q/K7M2XQ?src=line`);
+    expect(finderUrl(`${BASE}/`)).toBe(`${BASE}/?src=line#/line/found`);
   });
 });
 
 describe('foundFlex', () => {
-  it('is a bubble with a body and one uri button', () => {
-    const flex = foundFlex({ url: `${BASE}/x`, minutes: 30 }) as { contents: { type: string; footer: { contents: unknown[] } } };
+  it('is a bubble with a body and one uri button, and says the finder stays anonymous', () => {
+    const flex = foundFlex({ url: `${BASE}/x` }) as { contents: { type: string; footer: { contents: unknown[] } } };
     expect(flex.contents.type).toBe('bubble');
     expect(flex.contents.footer.contents).toHaveLength(1);
-    expect(JSON.stringify(flex)).toMatch(/30 分鐘/);
+    expect(JSON.stringify(flex)).toMatch(/看不到你的 LINE/);
+    expect(JSON.stringify(flex)).not.toMatch(/分鐘/);
   });
 });
 
 describe('handleEvents', () => {
   const user = { type: 'user', userId: USER };
   const postback = (data: string, extra: Partial<LineEvent> = {}): LineEvent => ({ type: 'postback', replyToken: 'r1', source: user, postback: { data }, ...extra });
+  const text = (body: string, replyToken = 'r2'): LineEvent => ({ type: 'message', replyToken, source: user, message: { type: 'text', text: body } });
 
-  async function run(events: LineEvent[], issue?: (user: string) => Promise<string>) {
+  async function run(events: LineEvent[], state: CodeState = 'bound') {
     const sent: { replyToken: string; messages: unknown[] }[] = [];
-    const issued: [string, number][] = [];
+    const looked: string[] = [];
     await handleEvents(events, {
       finderBase: BASE,
-      issueLink: async (u, minutes) => {
-        issued.push([u, minutes]);
-        return issue ? issue(u) : 'tok123';
+      lookup: async (code) => {
+        looked.push(code);
+        return state;
       },
       reply: async (replyToken, messages) => {
         sent.push({ replyToken, messages });
       },
       log: () => undefined,
     });
-    return { sent, issued };
+    return { sent, looked };
   }
   type Flex = { type: string; altText: string; contents: { footer: { contents: { action: { type: string; uri: string } }[] } } };
+  const uri = (sent: { messages: unknown[] }[]) => (sent[0].messages[0] as Flex).contents.footer.contents[0].action.uri;
 
   it('welcomes a new friend', async () => {
-    const { sent, issued } = await run([{ type: 'follow', replyToken: 'r0', source: user }]);
+    const { sent, looked } = await run([{ type: 'follow', replyToken: 'r0', source: user }]);
     expect(sent).toEqual([{ replyToken: 'r0', messages: WELCOME }]);
-    expect(issued).toEqual([]);
+    expect(looked).toEqual([]);
   });
 
-  it('answers “我撿到東西了” with a Flex Message whose button is the finder link', async () => {
-    const { sent, issued } = await run([postback('action=found')]);
-    expect(issued).toEqual([[USER, LINK_MINUTES]]);
+  it('answers the found button with a Flex Message whose button opens the code entry page', async () => {
+    const { sent, looked } = await run([postback('action=found')]);
+    expect(looked).toEqual([]);
     expect(sent).toHaveLength(1);
     expect(sent[0].replyToken).toBe('r1');
     const flex = sent[0].messages[0] as Flex;
     expect(flex.type).toBe('flex');
     expect(flex.altText.length).toBeLessThanOrEqual(400);
-    const { action } = flex.contents.footer.contents[0];
-    expect(action.type).toBe('uri');
-    expect(action.uri).toBe(`${BASE}/?src=line#/line/found?t=tok123`);
-    expect(action.uri.length).toBeLessThanOrEqual(1000);
-    expect(JSON.stringify(flex)).toMatch(new RegExp(`${LINK_MINUTES} 分鐘`));
+    expect(flex.contents.footer.contents[0].action.type).toBe('uri');
+    expect(uri(sent)).toBe(`${BASE}/?src=line#/line/found`);
     expect(JSON.stringify(sent)).not.toContain(USER);
   });
 
-  it('puts the code in the link when a sticker code is sent as text', async () => {
-    const { sent } = await run([{ type: 'message', replyToken: 'r2', source: user, message: { type: 'text', text: 'k7m2xq' } }]);
-    const flex = sent[0].messages[0] as Flex;
-    expect(flex.contents.footer.contents[0].action.uri).toBe(`${BASE}/?src=line#/line/found?t=tok123&c=K7M2XQ`);
-    expect(JSON.stringify(flex)).toMatch(/K7M2XQ 已經填好/);
+  it('sends a known finder code straight to that person\'s web message page', async () => {
+    const { sent, looked } = await run([text('k7m2xq')]);
+    expect(looked).toEqual(['K7M2XQ']);
+    expect(uri(sent)).toBe(`${BASE}/q/K7M2XQ?src=line`);
+    expect(JSON.stringify(sent[0].messages[0])).toMatch(/K7M2XQ 已經找到物主/);
+  });
+
+  it('says so when the code does not exist or was replaced', async () => {
+    const { sent } = await run([text('K7M2XQ')], 'unknown');
+    expect(sent).toEqual([{ replyToken: 'r2', messages: notFound('K7M2XQ') }]);
+  });
+
+  it('offers an unclaimed blank sticker to whoever holds it, and tells a finder to use a lost-and-found desk', async () => {
+    const { sent, looked } = await run([text('K7M2XQ')], 'unbound');
+    expect(looked).toEqual(['K7M2XQ']);
+    expect(uri(sent)).toBe(`${BASE}/q/K7M2XQ?src=line`);
+    const body = JSON.stringify(sent[0].messages[0]);
+    expect(body).toMatch(/K7M2XQ 還沒有主人/);
+    expect(body).toMatch(/認領這張貼紙/);
+    expect(body).toMatch(/招領站/);
   });
 
   it('points other text to the menu and ignores other postbacks and events', async () => {
-    const text = await run([{ type: 'message', replyToken: 'r3', source: user, message: { type: 'text', text: '你好' } }]);
-    expect(text.sent).toEqual([{ replyToken: 'r3', messages: HELP }]);
+    const other = await run([text('你好', 'r3')]);
+    expect(other.sent).toEqual([{ replyToken: 'r3', messages: HELP }]);
+    expect(other.looked).toEqual([]);
     expect((await run([postback('action=other')])).sent).toEqual([]);
     expect((await run([{ type: 'unfollow', source: user }, { type: 'message', replyToken: 'r4', message: { type: 'image' } }])).sent).toEqual([]);
   });
 
-  it('tells a person who asked too often to wait, and turns groups away', async () => {
-    const tooMany = await run([postback('action=found')], async () => {
-      throw new RateLimitedError();
-    });
-    expect(tooMany.sent).toEqual([{ replyToken: 'r1', messages: TOO_MANY }]);
+  it('turns groups away', async () => {
     const group = await run([postback('action=found', { source: { type: 'group', userId: USER } })]);
-    expect(group.issued).toHaveLength(0);
     expect(JSON.stringify(group.sent[0].messages)).toMatch(/1 對 1/);
   });
 
   it('skips redelivered events, and one failing event does not stop the others', async () => {
     const redelivered = await run([postback('action=found', { deliveryContext: { isRedelivery: true } })]);
-    expect(redelivered).toEqual({ sent: [], issued: [] });
+    expect(redelivered).toEqual({ sent: [], looked: [] });
 
     const logged: string[] = [];
     const replied: string[] = [];
-    let attempts = 0;
-    await handleEvents([postback('action=found'), { type: 'follow', replyToken: 'r9' }], {
+    await handleEvents([text('K7M2XQ'), { type: 'follow', replyToken: 'r9' }], {
       finderBase: BASE,
-      issueLink: async () => {
-        attempts += 1;
+      lookup: async () => {
         throw new Error('database down');
       },
       reply: async (replyToken) => {
@@ -158,7 +170,6 @@ describe('handleEvents', () => {
       },
       log: (...args) => logged.push(args.join(' ')),
     });
-    expect(attempts).toBe(1);
     expect(replied).toEqual(['r9']);
     expect(logged[0]).toMatch(/database down/);
   });

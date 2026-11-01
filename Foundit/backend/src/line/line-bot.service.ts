@@ -1,16 +1,16 @@
-import { HttpException, HttpStatus, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { LineMessage, LineEvent, RateLimitedError, handleEvents, verifySignature } from './line-bot';
-import { LineService } from './line.service';
+import { CodeState, LineMessage, LineEvent, handleEvents, verifySignature } from './line-bot';
+import { CampusService } from '../campus/campus.service';
 
-/** 把 line-bot 的邏輯接到 LINE（驗簽、回覆訊息）和 LineService（發連結）。 */
+/** 把 line-bot 的邏輯接到 LINE（驗簽、回覆訊息）和網站的貼紙查詢（尋物碼是不是真的）。 */
 @Injectable()
 export class LineBotService {
   private readonly logger = new Logger(LineBotService.name);
 
   constructor(
     private readonly config: ConfigService,
-    private readonly line: LineService,
+    private readonly campus: CampusService,
   ) {}
 
   /** 三個環境變數少一個，webhook 就整個關閉，避免半套運作。 */
@@ -38,17 +38,16 @@ export class LineBotService {
 
     await handleEvents(events, {
       finderBase,
-      issueLink: async (lineUserId, minutes) => {
-        try {
-          return (await this.line.issueLink(lineUserId, minutes)).token;
-        } catch (error) {
-          if (error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS) throw new RateLimitedError();
-          throw error;
-        }
-      },
+      lookup: (code) => this.lookup(code),
       reply: (replyToken, messages) => this.reply(apiBase, accessToken, replyToken, messages),
       log: (...args) => this.logger.warn(args.map(String).join(' ')),
     });
+  }
+
+  /** 只問狀態，不取得物主任何資料；和撿到的人在網站上掃描時看到的一樣。 */
+  private async lookup(code: string): Promise<CodeState> {
+    const data = (await this.campus.call('sticker_lookup', { p_code: code }, null)) as { status?: string } | null;
+    return data?.status === 'bound' || data?.status === 'unbound' ? data.status : 'unknown';
   }
 
   private async reply(apiBase: string, accessToken: string, replyToken: string, messages: LineMessage[]): Promise<void> {

@@ -6,5 +6,6 @@ import { UploadModule } from '../upload/upload.module';
   imports: [UploadModule],
   controllers: [CampusController],
   providers: [CampusService],
+  exports: [CampusService],
 })
 export class CampusModule {}

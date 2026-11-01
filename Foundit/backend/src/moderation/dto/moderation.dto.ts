@@ -6,9 +6,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CleanText } from '../../common/text-safety';
 
 export class CreateReportDto {
-  @ApiProperty({ enum: ['item', 'user', 'message'] })
-  @IsIn(['item', 'user', 'message'])
-  targetType: 'item' | 'user' | 'message';
+  @ApiProperty({ enum: ['item', 'user', 'message', 'station'] })
+  @IsIn(['item', 'user', 'message', 'station'])
+  targetType: 'item' | 'user' | 'message' | 'station';
 
   @ApiProperty()
   @IsString()
