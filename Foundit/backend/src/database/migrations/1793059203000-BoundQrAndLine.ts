@@ -72,6 +72,15 @@ export class BoundQrAndLine1793059203000 implements MigrationInterface {
       )
     `);
     await queryRunner.query(`CREATE INDEX IF NOT EXISTS "idx_qr_finder_notices_line_created" ON "qr_finder_notices" ("line_user_hash", "created_at")`);
+
+    // 正式環境由 migration 帳號建表，API 用受限的 DB_USER 執行，新表預設碰不到：在這裡補上剛好需要的權限
+    // （與 db-least-privilege*.sql 相同；留言紀錄只能追加）。
+    const role = process.env.DB_USER;
+    if (role && (await queryRunner.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [role])).length) {
+      const quoted = '"' + role.replace(/"/g, '""') + '"';
+      await queryRunner.query(`GRANT SELECT, INSERT, UPDATE ON qr_batches, line_links TO ${quoted}`);
+      await queryRunner.query(`GRANT SELECT, INSERT ON qr_finder_notices TO ${quoted}`);
+    }
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
