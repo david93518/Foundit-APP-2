@@ -7,9 +7,10 @@ import { LineLink } from '../common/entities/line-link.entity';
 import { QrFinderNotice } from '../common/entities/qr-finder-notice.entity';
 import { QrModule } from '../qr/qr.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CampusModule } from '../campus/campus.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([LineLink, QrFinderNotice]), QrModule, NotificationsModule],
+  imports: [TypeOrmModule.forFeature([LineLink, QrFinderNotice]), QrModule, NotificationsModule, CampusModule],
   controllers: [LineController],
   providers: [LineService, LineBotService],
 })

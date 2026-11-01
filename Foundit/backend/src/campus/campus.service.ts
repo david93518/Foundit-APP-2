@@ -22,6 +22,8 @@ const FUNCTIONS: Record<string, string[]> = {
   sticker_reply_finder: ['p_thread', 'p_token', 'p_body'],
   sticker_bind: ['p_code', 'p_item_name'],
   my_stickers: [],
+  my_finder_code: [],
+  rotate_finder_code: [],
   sticker_rename: ['p_code', 'p_item_name'],
   sticker_unbind: ['p_code'],
   sticker_thread_owner: ['p_thread'],

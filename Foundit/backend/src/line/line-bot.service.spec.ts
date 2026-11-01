@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { LineBotService } from './line-bot.service';
@@ -17,13 +17,16 @@ const env = (over: Record<string, string> = {}) => {
   return { get: (key: string, fallback?: string) => values[key] ?? fallback } as unknown as ConfigService;
 };
 
-function setup(over: Record<string, string> = {}, issue?: () => Promise<{ token: string }>) {
-  const line = { issueLink: jest.fn(issue ?? (async () => ({ token: 'tok-1', expiresAt: new Date(), uses: 3 }))) };
-  const service = new LineBotService(env(over), line as never);
-  return { service, line };
+function setup(over: Record<string, string> = {}, status = 'bound') {
+  const campus = { call: jest.fn(async () => ({ status, item_name: '', mine: false })) };
+  const service = new LineBotService(env(over), campus as never);
+  return { service, campus };
 }
 
 const found = JSON.stringify({ events: [{ type: 'postback', replyToken: 'rt', source: { type: 'user', userId: USER }, postback: { data: 'action=found' } }] });
+const codeSent = JSON.stringify({ events: [{ type: 'message', replyToken: 'rc', source: { type: 'user', userId: USER }, message: { type: 'text', text: 'k7m2xq' } }] });
+type Sent = { replyToken: string; messages: { text?: string; contents?: { footer: { contents: { action: { uri: string } }[] } } }[] };
+const body = (mock: jest.SpyInstance, call = 0) => JSON.parse((mock.mock.calls[call] as [string, RequestInit])[1].body as string) as Sent;
 
 describe('LineBotService.handleWebhook', () => {
   let fetchMock: jest.SpyInstance;
@@ -34,40 +37,44 @@ describe('LineBotService.handleWebhook', () => {
 
   it('is closed until the channel secret, access token and finder url are all set', async () => {
     for (const missing of ['LINE_CHANNEL_SECRET', 'LINE_CHANNEL_ACCESS_TOKEN', 'LINE_FINDER_URL']) {
-      const { service, line } = setup({ [missing]: '' });
-      await expect(service.handleWebhook(Buffer.from(found), sign(found))).rejects.toBeInstanceOf(ServiceUnavailableException);
-      expect(line.issueLink).not.toHaveBeenCalled();
+      const { service, campus } = setup({ [missing]: '' });
+      await expect(service.handleWebhook(Buffer.from(codeSent), sign(codeSent))).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(campus.call).not.toHaveBeenCalled();
     }
   });
 
   it('rejects a bad or missing signature before doing anything', async () => {
-    const { service, line } = setup();
-    await expect(service.handleWebhook(Buffer.from(found), sign(found, 'wrong'))).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(service.handleWebhook(Buffer.from(found), undefined)).rejects.toBeInstanceOf(UnauthorizedException);
-    expect(line.issueLink).not.toHaveBeenCalled();
+    const { service, campus } = setup();
+    await expect(service.handleWebhook(Buffer.from(codeSent), sign(codeSent, 'wrong'))).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(service.handleWebhook(Buffer.from(codeSent), undefined)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(campus.call).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('issues a link and replies through the LINE reply API with the access token', async () => {
-    const { service, line } = setup();
+  it('replies through the LINE reply API with the access token; the menu button opens the code entry page', async () => {
+    const { service, campus } = setup();
     await service.handleWebhook(Buffer.from(found), sign(found));
-    expect(line.issueLink).toHaveBeenCalledWith(USER, 60);
+    expect(campus.call).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.line.me/v2/bot/message/reply');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer access-token');
-    const sent = JSON.parse(init.body as string) as { replyToken: string; messages: { contents: { footer: { contents: { action: { uri: string } }[] } } }[] };
+    const sent = body(fetchMock);
     expect(sent.replyToken).toBe('rt');
-    expect(sent.messages[0].contents.footer.contents[0].action.uri).toBe('https://app.example.test/?src=line#/line/found?t=tok-1');
+    expect(sent.messages[0].contents?.footer.contents[0].action.uri).toBe('https://app.example.test/?src=line#/line/found');
   });
 
-  it('answers “too many” when the person is rate limited', async () => {
-    const { service } = setup({}, async () => {
-      throw new HttpException('操作太頻繁，請稍後再試', HttpStatus.TOO_MANY_REQUESTS);
-    });
-    await service.handleWebhook(Buffer.from(found), sign(found));
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(init.body as string).toMatch(/很多次連結/);
+  it('checks a sent code with the public sticker lookup and links straight to its web page', async () => {
+    const { service, campus } = setup();
+    await service.handleWebhook(Buffer.from(codeSent), sign(codeSent));
+    expect(campus.call).toHaveBeenCalledWith('sticker_lookup', { p_code: 'K7M2XQ' }, null);
+    expect(body(fetchMock).messages[0].contents?.footer.contents[0].action.uri).toBe('https://app.example.test/q/K7M2XQ?src=line');
+  });
+
+  it('tells the finder when the code is unknown', async () => {
+    const { service } = setup({}, 'unknown');
+    await service.handleWebhook(Buffer.from(codeSent), sign(codeSent));
+    expect(body(fetchMock).messages[0].text).toMatch(/找不到尋物碼 K7M2XQ/);
   });
 
   it('accepts LINE’s verify call (no events) and malformed bodies without replying', async () => {
