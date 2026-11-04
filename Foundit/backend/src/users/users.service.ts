@@ -171,7 +171,7 @@ export class UsersService {
       await manager.update(User, { id: userId }, {
         status: 'deleted', tokenVersion: () => '"token_version" + 1',
         phone: `deleted:${userId}`.slice(0, 100), name: '已刪除的使用者',
-        email: '', verifiedEmail: '', bio: '', avatarUrl: '', googleSub: null, fcmToken: null, isVerified: false,
+        email: '', verifiedEmail: '', bio: '', avatarUrl: '', googleSub: null, fcmToken: null, isVerified: false, passwordHash: null,
       });
     });
     this.gateway.disconnectUser(userId);

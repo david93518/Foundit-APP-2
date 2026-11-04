@@ -42,6 +42,10 @@ export class User {
   @Column({ length: 120, default: '' })
   email: string;
 
+  /** 網站「Email＋密碼」帳號的密碼雜湊（scrypt，見 auth/password.ts）；Google 帳號為 null。預設不查出來。 */
+  @Column({ name: 'password_hash', type: 'varchar', length: 200, nullable: true, select: false })
+  passwordHash: string | null;
+
   @Column({ name: 'is_verified', default: false })
   isVerified: boolean;
 

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
 import { assertActiveSession, AccessTokenPayload } from './session';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -18,6 +18,8 @@ import { InvitedLoginDto } from './dto/invited-login.dto';
 import { AdminAction } from '../common/entities/admin-action.entity';
 import { cleanText, findSensitiveData, isReservedName } from '../common/text-safety';
 import { isGoogleAvatar } from '../common/media-url';
+import { EmailLoginDto, EmailRegisterDto } from './dto/email-login.dto';
+import { burnPasswordCheck, emailAccountKey, hashPassword, normalizeEmail, verifyPassword } from './password';
 
 /** Google 顯示名稱常是真名，也可能被設成「FOUND !T 客服」；不合適時改用預設暱稱。 */
 function displayNameFromGoogle(name: string): string {
@@ -39,6 +41,76 @@ export class AuthService {
   ) {}
 
   private readonly logger = new Logger(AuthService.name);
+
+  /** Failed email sign-ins per account in the last 15 minutes (one API instance, like the OTP store). */
+  private readonly emailFailures = new Map<string, number[]>();
+  private static readonly EMAIL_FAILURES = 10;
+  private static readonly EMAIL_WINDOW_MS = 15 * 60_000;
+
+  /**
+   * 網站的 Email＋密碼註冊。和 Google 帳號完全分開（帳號鍵見 auth/password.ts 的 emailAccountKey）：
+   * email 沒有驗證過，所以 verifiedEmail 留空、不套用 ADMIN_EMAILS，也拿不到工作人員資格。
+   */
+  async emailRegister(dto: EmailRegisterDto): Promise<{ token: string; user: User }> {
+    const email = normalizeEmail(dto.email);
+    const key = emailAccountKey(email);
+    if (await this.userRepo.findOne({ where: { phone: key } })) {
+      throw new ConflictException('這個 Email 已經註冊，請直接登入');
+    }
+    const wanted = cleanText(dto.name ?? '').slice(0, 50);
+    // Never default to the email's local part: the name is shown to other people in chats.
+    const name = wanted && !isReservedName(wanted) && !findSensitiveData(wanted) ? wanted : 'Email 用戶';
+    let user = this.userRepo.create({
+      phone: key,
+      name,
+      email: email.slice(0, 120),
+      verifiedEmail: '',
+      isVerified: false,
+      passwordHash: await hashPassword(dto.password),
+      role: 'user',
+      status: 'active',
+      tokenVersion: 0,
+    });
+    try {
+      user = await this.userRepo.save(user);
+    } catch (error) {
+      // Two sign-ups for the same email at once: the unique phone key lets only one through.
+      if ((error as { code?: string }).code === '23505') throw new ConflictException('這個 Email 已經註冊，請直接登入');
+      throw error;
+    }
+    await this.initPoints(user.id);
+    return { token: this.sign(user), user };
+  }
+
+  /** 網站的 Email＋密碼登入。錯誤一律回同一句話；同一個帳號 15 分鐘內錯 10 次就先擋下。 */
+  async emailLogin(dto: EmailLoginDto): Promise<{ token: string; user: User }> {
+    const key = emailAccountKey(dto.email);
+    const now = Date.now();
+    const recent = (this.emailFailures.get(key) ?? []).filter((t) => now - t < AuthService.EMAIL_WINDOW_MS);
+    if (recent.length >= AuthService.EMAIL_FAILURES) {
+      throw new HttpException('嘗試太多次，請 15 分鐘後再試', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const user = await this.userRepo
+      .createQueryBuilder('u')
+      .addSelect('u.passwordHash')
+      .where('u.phone = :key', { key })
+      .getOne();
+    let ok = false;
+    if (user?.passwordHash) ok = await verifyPassword(dto.password, user.passwordHash);
+    else await burnPasswordCheck(dto.password);
+    if (!user || !ok) {
+      recent.push(now);
+      this.emailFailures.set(key, recent);
+      throw new UnauthorizedException('Email 或密碼不正確');
+    }
+    this.emailFailures.delete(key);
+    if (user.status === 'deleted' || user.status === 'suspended') {
+      throw new UnauthorizedException('這個帳號無法登入');
+    }
+    // The hash goes no further than this check; deleting it (not setting null) keeps a later save from clearing it.
+    delete (user as Partial<User>).passwordHash;
+    return { token: this.sign(user), user };
+  }
 
   async sendOtp(dto: SendOtpDto): Promise<void> {
     await this.otpService.send(normalizeTaiwanMobile(dto.phone));

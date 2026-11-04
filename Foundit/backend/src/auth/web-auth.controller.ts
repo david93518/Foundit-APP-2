@@ -11,6 +11,7 @@ import { DataSource } from 'typeorm';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { OAuthDto } from './dto/oauth.dto';
+import { EmailLoginDto, EmailRegisterDto } from './dto/email-login.dto';
 import { toMobileUser } from '../users/user-mobile.serializer';
 import { RateLimit } from '../common/abuse-limit.interceptor';
 
@@ -54,7 +55,31 @@ export class WebAuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     this.origin(req);
-    const session = await this.auth.oauthLogin('google', dto, true);
+    return this.start(await this.auth.oauthLogin('google', dto, true), res);
+  }
+  /** Email＋密碼帳號，和 Google 帳號分開（見 AuthService.emailRegister）。 */
+  @Post('web-email/register')
+  @RateLimit({ name: 'web-email-register', limit: 10, windowMs: 3600000, by: 'ip' })
+  async emailRegister(
+    @Body() dto: EmailRegisterDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    this.origin(req);
+    return this.start(await this.auth.emailRegister(dto), res);
+  }
+  @Post('web-email/login')
+  @RateLimit({ name: 'web-email-login', limit: 30, windowMs: 600000, by: 'ip' })
+  async emailLogin(
+    @Body() dto: EmailLoginDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    this.origin(req);
+    return this.start(await this.auth.emailLogin(dto), res);
+  }
+  /** Same for every sign-in method: register the campus member, set the session cookie, return the token. */
+  private async start(session: { token: string; user: Parameters<typeof toMobileUser>[0] }, res: Response) {
     await this.db.query(
       'INSERT INTO campus.members(user_id) VALUES($1) ON CONFLICT(user_id) DO UPDATE SET last_seen=now()',
       [session.user.id],
