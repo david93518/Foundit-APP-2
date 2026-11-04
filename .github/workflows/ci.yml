@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    # test 是要部署的整合分支：Render 設成「CI 通過才自動部署」，所以 push／合併到 test 也要跑。
+    # main 是正式環境：測試與映像都過了，render job 會觸發 Render 部署。test 是整合分支，push／合併也要跑。
     branches: [main, master, test]
   pull_request:
   workflow_dispatch:
@@ -91,6 +91,29 @@ jobs:
             ${{ steps.meta.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  render:
+    name: Render deploy
+    needs: [backend, image]
+    # Render 自己的 Auto-Deploy 收不到這個 repo 的推送通知（從來沒有自動觸發過），所以改用 Render 的 Deploy Hook：
+    # 網址放在 repository secret RENDER_DEPLOY_HOOK（Render → foundit-api → Settings → Deploy Hook）。
+    # 只有 main 的測試與映像都通過才會部署；沒有設定 secret 就跳過，不會讓 CI 失敗。
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          set -eu
+          if [ -z "${RENDER_DEPLOY_HOOK:-}" ]; then
+            echo "::warning::沒有設定 RENDER_DEPLOY_HOOK，這次不會自動部署，請到 Render 手動部署。"
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK" -o /dev/null
+          echo "已觸發 Render 部署（${GITHUB_SHA}）"
 
   deploy:
     name: Deploy
