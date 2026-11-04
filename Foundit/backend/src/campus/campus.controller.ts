@@ -32,9 +32,33 @@ export class CampusController {
     private readonly media: MediaStorageService,
     private readonly config: ConfigService,
   ) {}
+  /**
+   * 撿到者的聊天室每 5 秒輪詢一次對話。很多人共用同一個校園 Wi-Fi（同一個對外 IP）時，
+   * 一般的 120 次很快就會用完，所以這支另外計算。它要帶 256 位元的對話 token，猜不到，
+   * 放寬也不會讓人猜碼；每個 IP 的總量仍受 main.ts 每分鐘 600 次的上限約束。
+   * 必須宣告在 rpc/:name 之前，路由才會先比對到這裡。
+   */
+  @Post('rpc/sticker_thread_finder')
+  @UseGuards(OptionalJwtAuthGuard)
+  @RateLimit({
+    name: 'campus-thread-poll',
+    limit: 600,
+    windowMs: 60000,
+    by: 'ip',
+  })
+  async finderThread(
+    @Body() args: Record<string, unknown>,
+    @CurrentUser() user?: User,
+  ) {
+    return {
+      success: true,
+      data: await this.campus.call('sticker_thread_finder', args, user),
+    };
+  }
+  /** 已登入的人以帳號計算額度，同一個 Wi-Fi 下的其他人不會互相拖累；未登入的人以來源 IP 計算。 */
   @Post('rpc/:name')
   @UseGuards(OptionalJwtAuthGuard)
-  @RateLimit({ name: 'campus-rpc', limit: 120, windowMs: 60000, by: 'ip' })
+  @RateLimit({ name: 'campus-rpc', limit: 120, windowMs: 60000, by: 'user' })
   async rpc(
     @Param('name') name: string,
     @Body() args: Record<string, unknown>,
