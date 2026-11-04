@@ -134,8 +134,9 @@ export class CampusService {
         }
         switch (name) {
           case 'station_list':
+            // 站點清單不用登入就能讀；觸發器寫進 data 的 updatedByEmail 是編輯者的 email，不能公開。
             return manager.query(
-              'SELECT id,data,updated_at FROM campus.manual_stations ORDER BY created_at',
+              "SELECT id,data - 'updatedByEmail' AS data,updated_at FROM campus.manual_stations ORDER BY created_at",
             );
           case 'station_insert':
           case 'station_update': {
